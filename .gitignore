@@ -1,0 +1,17 @@
+.ven/
+ven/
+__pycache__/
+.pytest-cache/
+*.py[cod]
+data/
+datasets/
+projects/
+results/
+outputs/
+*.pt
+*.pth
+*.npz
+*.tmp
+*.log
+.env
+.DS_Store
