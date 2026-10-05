@@ -50,7 +50,7 @@ def plot_per_class(run_dir, split, label):
     table = pd.read_csv(run_dir / f"per_class_{split}.csv", dtype={"species": str})
     worst = table.sort_values("f1").head(25)
     fig, ax = plt.subplots(figsize=(9, max(4, len(worst) * .26)))
-    ax.barh(worst.species, worst.f1)
+    ax.barh(worst.species if "species_name" in worst else worst.species, worst.f1)
     ax.invert_yaxis()
     ax.set(xlabel="F1", xlim=(0, 1), title=f"{label} · {split} · lowest F1")
     ax.grid(axis="x", alpha=.2)
@@ -72,15 +72,41 @@ def plot_dataset_counts(path, output_dir):
         return
     table = pd.read_csv(path, dtype={"species": str})
     table = table.sort_values("train", ascending=False)
-    fig, ax = plt.subplots(figsize=(max(10, len(table) * .15), 5))
+    large = len(table) > 40
+    fig, ax = plt.subplots(figsize=(12 if large else max(10, len(table) * .15), 5))
+    positions = np.arange(len(table)) if large else table.species
     bottom = np.zeros(len(table))
     for split in ("train", "validation", "test"):
-        ax.bar(table.species, table[split], bottom=bottom, label=split)
+        ax.bar(positions, table[split], bottom=bottom, label=split)
         bottom += table[split].to_numpy()
-    ax.tick_params(axis="x", labelrotation=90, labelsize=7)
+    if large :
+        ax.set_xlabel("Species index, sorted by training frequency")
+    else :
+        ax.tick_params(axis="x", labelrotation=90, labelsize=7)
     ax.set(ylabel="Images", title="Dataset distribution by species")
     ax.legend()
     save_figure(fig, output_dir / "dataset_distribution.png")
+    for rank in ("kingdom", "class", "order"):
+        if rank not in table:
+            continue
+
+        column = f"{rank}_name" if f"{rank}_name" in table else rank
+        grouped = (
+            table.groupby(column)[["train", "validation", "test"]]
+            .sum()
+            .sort_values("train", ascending=False)
+        )
+        fig, ax = plt.subplots(figsize=(12, max(4, len(grouped) * .25)))
+        bottom = np.zeros(len(grouped))
+
+        for split in ("train", "validation", "test"):
+            ax.barh(grouped.index, grouped[split], left=bottom, label=split)
+            bottom += grouped[split].to_numpy()
+
+        ax.invert_yaxis()
+        ax.set(xlabel="Images", title=f"Dataset distribution by {rank}")
+        ax.legend()
+        save_figure(fig, output_dir / f"dataset_distribution_{rank}.png")
 
 
 def plot_augmentation_preview(image_path, transforms, settings, output_path):
