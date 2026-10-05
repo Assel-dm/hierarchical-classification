@@ -27,24 +27,50 @@ class HierarchicalSoftLabelLoss(nn.Module):
 
 class HierarchicalCrossEntropy(nn.Module):
     """Compute HXE"""
-    def __init__(self, mappings, alpha):
+    def __init__(self, mappings, alpha, normalize_weights=False):
         super().__init__()
-        for rank, matrix in mappings.items():
-            self.register_buffer(rank, torch.as_tensor(matrix, dtype=torch.float32))
-        depths = torch.tensor([4., 3., 2., 1.])
-        self.register_buffer("weights", torch.exp(-float(alpha) * depths))
+        self.level_buffers = []
+
+        for index, matrix in enumerate(reversed(list(mappings.values()))):
+            name = f"level_{index}"
+            self.register_buffer(
+                name,
+                torch.as_tensor(matrix, dtype=torch.float32),
+            )
+            self.level_buffers.append(name)
+
+        depths = torch.arange(len(mappings) + 1, 0, -1, dtype=torch.float32)
+        weights = torch.exp(-float(alpha) * depths)
+
+        if normalize_weights:
+            total = 1 + mappings[next(iter(mappings))].shape[0] * math.exp(
+                -float(alpha) * (len(mappings) + 1)
+            )
+            total += sum(
+                matrix.shape[1] * math.exp(-float(alpha) * depth)
+                for depth, matrix in enumerate(mappings.values(), start=1)
+            )
+            weights /= total
+
+        self.register_buffer("weights", weights)
 
     def forward(self, logits, targets):
         log_p = F.log_softmax(logits, dim=1)
-        log_species = log_p.gather(1, targets[:, None]).squeeze(1)
-        ancestor_logs = []
-        for mapping in (self.genus, self.family, self.order):
+        log_nodes = [log_p.gather(1, targets[:, None]).squeeze(1)]
+
+        for name in self.level_buffers:
+            mapping = getattr(self, name)
             groups = mapping[targets].argmax(dim=1)
             members = mapping[:, groups].T.bool()
-            ancestor_logs.append(torch.logsumexp(log_p.masked_fill(~members, -torch.inf), dim=1))
-        log_genus, log_family, log_order = ancestor_logs
-        terms = torch.stack([log_species - log_genus, log_genus - log_family,
-                             log_family - log_order, log_order], dim=1)
+            log_nodes.append(
+                torch.logsumexp(log_p.masked_fill(~members, -torch.inf), dim=1)
+            )
+
+        log_nodes.append(torch.zeros_like(log_nodes[0]))
+        terms = torch.stack(
+            [child - parent for child, parent in zip(log_nodes, log_nodes[1:])],
+            dim=1,
+        )
         return -(terms * self.weights).sum(dim=1).mean()
 
 
@@ -52,12 +78,12 @@ def build_loss(variant, parameter, data):
     """Choose CE, HXE or soft labels"""
     if variant == "ce":
         if parameter is not None:
-            raise ValueError("CE ne prend pas de paramètre")
+            raise ValueError("CE does not use parameters")
         return nn.CrossEntropyLoss()
     if variant not in {"soft", "hxe"}:
-        raise ValueError(f"Variante MBM inconnue : {variant}")
+        raise ValueError(f"Unknown method : {variant}")
     if isinstance(parameter, bool) or not isinstance(parameter, (int, float)) or not math.isfinite(parameter) or parameter < 0:
-        raise ValueError("Alpha/beta doit être un nombre fini positif ou nul")
+        raise ValueError("Alpha/beta must be a positif or null real number")
     if variant == "soft":
         return HierarchicalSoftLabelLoss(build_soft_label_matrix(data["normalized_distances"], parameter))
     return HierarchicalCrossEntropy(data["mappings"], parameter)
@@ -74,7 +100,7 @@ def beta_for_target_mass(normalized_distances, target_mass, iterations=60):
     """estimate beta for a target mass on the true target""" 
     lower, upper = 0., 200.
     if not 1 / len(normalized_distances) <= target_mass <= 1:
-        raise ValueError("Masse cible hors de l'intervalle possible")
+        raise ValueError("Targeted mass outside the interval")
     for _ in range(iterations):
         middle = (lower + upper) / 2
         if soft_label_statistics(normalized_distances, middle)["true_class_mass"] < target_mass:
