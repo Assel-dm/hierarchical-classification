@@ -74,7 +74,7 @@ class HierarchicalCrossEntropy(nn.Module):
         return -(terms * self.weights).sum(dim=1).mean()
 
 
-def build_loss(variant, parameter, data, normalize_hxe=FALSE):
+def build_loss(variant, parameter, data, normalize_hxe=False):
     """Choose CE, HXE or soft labels"""
     if variant == "ce":
         if parameter is not None:
