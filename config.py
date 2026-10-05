@@ -2,9 +2,10 @@ from pathlib import Path
 
 # File on the remote machine
 DATASET = "small_collemboles"
-DATASET_ROOT = Path("/dataset/small-collomboles")
+DATASET_ROOT = Path.home() / "datasets" / "small-collomboles"
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
 EXPERIMENT_NAME = "small_collemboles_convnext_v1"
+
 
 # One backbone and one augmentation by campaign
 MODEL_KEY = "convnext_tiny"  # resnet50, convnext_tiny, dinov2_base, dinov3_base
