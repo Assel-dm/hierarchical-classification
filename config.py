@@ -1,10 +1,12 @@
 from pathlib import Path
 
 # File on the remote machine
-DATASET = "small_collemboles"
-DATASET_ROOT = Path.home() / "datasets" / "small-collomboles"
+DATASET = "inaturalist19_h" #small_collemboles or inaturalist19_h
+DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
-EXPERIMENT_NAME = "small_collemboles_convnext_v1"
+INAT_HIERARCHY_FILE = DATASET_ROOT / "metadata" / "inaturalist19_isa.txt" #Used hierarchy
+INAT_CATEGORIES_FILE = Path.home() / "datasets" / "inaturalist-19" / "categories.json"
+EXPERIMENT_NAME = "inat19h_convnext_v1"
 
 
 # One backbone and one augmentation by campaign
@@ -17,6 +19,7 @@ AUGMENTATION = "autoaugment_original"  # standard or autoaugment_original
 
 
 METHOD = "mbm"
+HXE_NORMALIZE_WEIGHTS = True
 EXPERIMENTS = [
     ("ce", None),          # Baseline
     ("soft", 5),           # Soft Labels : beta
