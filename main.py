@@ -11,8 +11,10 @@ from common.models import SpeciesClassifier, resolve_model_settings, build_trans
 from common.training import seed_everything, train_model, load_checkpoint, save_json, check_configuration
 from common.evaluation import evaluate_model
 from common.visualization import build_reports, plot_augmentation_preview
-from datasets.small_collemboles import load_small_collemboles, build_loaders
-from methods.mbm import build_loss
+from common.data import build_loaders
+from datasets.small_collemboles import load_small_collemboles
+from datasets.inaturalist19 import load_inaturalist19, show_summary
+from methods.mbm import build_loss, soft_label_statistics
 
 
 def main():
@@ -38,18 +40,43 @@ def main():
     # 2. Dataset and class representation
     if cfg.DATASET == "small_collemboles":
         data = load_small_collemboles(cfg.DATASET_ROOT)
+    elif cfg.DATASET == "inaturalist19_h":
+        data = load_inaturalist19(
+            cfg.DATASET_ROOT,
+            getattr(cfg, "INAT_HIERARCHY_FILE", None),
+            getattr(cfg, "INAT_CATEGORIES_FILE", None),
+        )
+        show_summary(data)
     else:
-        raise NotImplementedError(f"Dataset to be added in main.py : {cfg.DATASET}")
+        raise NotImplementedError(f"Dataset to be added main.py : {cfg.DATASET}")
+
     if cfg.METHOD != "mbm":
-        raise NotImplementedError(f"Method to be added in main.py : {cfg.METHOD}")
+        raise NotImplementedError(f"Method to be added main.py : {cfg.METHOD}")
+
     for variant, parameter in cfg.EXPERIMENTS:
-        build_loss(variant, parameter, data)  
+        # Check choices before training
+        build_loss(
+            variant,
+            parameter,
+            data,
+            getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False),
+        )
+
     for stage in cfg.STAGES:
         spec = cfg.STAGE_SETTINGS[stage]
-        if spec["learning_rate"] <= 0 or spec["max_epochs"] < 1 or spec["patience"] < 1:
-            raise ValueError(f"Invalide training parameters for {stage}")
-    settings = resolve_model_settings(cfg.MODEL_KEY, cfg.IMAGE_SIZE, cfg.HEAD_DROPOUT, cfg.FREEZE_BATCH_NORM)
-    campaign_dir = Path(cfg.OUTPUT_ROOT).expanduser().resolve() / cfg.EXPERIMENT_NAME
+        if (
+            spec["learning_rate"] <= 0
+            or spec["max_epochs"] < 1
+            or spec["patience"] < 1
+        ):
+            raise ValueError(f"Learning parameters invalid for {stage}")
+
+    settings = resolve_model_settings(
+        cfg.MODEL_KEY, cfg.IMAGE_SIZE, cfg.HEAD_DROPOUT, cfg.FREEZE_BATCH_NORM
+    )
+    campaign_dir = (
+        Path(cfg.OUTPUT_ROOT).expanduser().resolve() / cfg.EXPERIMENT_NAME
+    )
 
     campaign_config = {
         "dataset": data["name"], "taxonomy": data["taxonomy"].to_dict("records"),
@@ -59,6 +86,11 @@ def main():
         "torch": str(torch.__version__).split("+")[0], "torchvision": torchvision.__version__.split("+")[0],
         "timm": timm.__version__,
     }
+    if data["name"] == "inaturalist19_h":
+        campaign_config["loss_version"] = "mbm_seven_ranks_v1"
+    if getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False):
+        campaign_config["hxe_normalize_weights"] = True
+    
     check_configuration(campaign_dir / "campaign.json", campaign_config)
     save_json(campaign_dir / "runtime.json", {"dataset_root": str(data["root"]), "device": str(device),
                                             "num_workers": cfg.NUM_WORKERS})
@@ -68,6 +100,21 @@ def main():
     for split, samples in data["samples"].items():
         counts[split] = pd.Series([label for _, label in samples]).value_counts().reindex(range(len(counts)), fill_value=0).to_numpy()
     counts.to_csv(reports_dir / "dataset_counts.csv", index=False)
+    
+    soft_settings = [
+        soft_label_statistics(data["normalized_distances"], parameter)
+        for variant, parameter in cfg.EXPERIMENTS
+        if variant == "soft"
+    ]
+    if soft_settings:
+        pd.DataFrame(soft_settings).to_csv(
+            reports_dir / "soft_label_statistics.csv", index=False
+        )
+        for row in soft_settings:
+            print(
+                f"Soft Labels beta={row['beta']:g} : "
+                f"mean mass for the real species={row['true_class_mass']:.3f}"
+            )
     print("Results :", campaign_dir)
     print("Classes :", len(data["species"]), "| Images :", campaign_config["split_counts"])
 
@@ -97,7 +144,7 @@ def main():
                                           pretrained=cfg.PRETRAINED and cfg.RUN_TRAINING and new_frozen)
                 model.set_stage(stage)
                 model.to(device)
-                criterion = build_loss(variant, parameter, data).to(device)
+                criterion = build_loss(variant, parameter, data, getattr(cfg,"HXE_NORMALIZE_WEIGHTS", False),).to(device)
                 loaders = build_loaders(data, settings, cfg.BATCH_SIZE, cfg.NUM_WORKERS,
                                         seed, cfg.AUGMENTATION, device)
 
@@ -106,7 +153,7 @@ def main():
                     source_stage = stage_order[stage_order.index(stage) - 1]
                     source_dir = experiment_dir / source_stage
                     if not (source_dir / "complete.json").exists():
-                        raise FileNotFoundError(f"Terminer d'abord la phase {source_stage} : {source_dir}")
+                        raise FileNotFoundError(f"First finish stage {source_stage} : {source_dir}")
                     source = load_checkpoint(source_dir / "best.pt")
                     expected = {**metadata, "stage": source_stage, "training": cfg.STAGE_SETTINGS[source_stage]}
                     if source["metadata"] != expected:
