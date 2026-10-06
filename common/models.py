@@ -74,11 +74,13 @@ class SpeciesClassifier(nn.Module):
 
     def set_stage(self, stage):
         """Unfreeze choosen modules """ 
-        if stage not in ("frozen", "partial", "deeper"):
+        if stage not in ("frozen", "partial", "deeper", "full"):
             raise ValueError(f"Unknown stage : {stage}")
-        self.open_modules = [] if stage == "frozen" else list(self.settings[stage])
+        self.stage = stage
+        self.open_modules = (list(self.settings[stage])  if stage in ("partial", "deeper") else [])
+        
         for p in self.backbone.parameters():
-            p.requires_grad = False
+            p.requires_grad = stage == "full"
         for name in self.open_modules:
             for p in self.backbone.get_submodule(name).parameters():
                 p.requires_grad = True
@@ -94,14 +96,16 @@ class SpeciesClassifier(nn.Module):
     def train(self, mode=True):
         """Keep frozen modules in evaluation""" 
         super().train(mode)
-        self.backbone.eval()
-        if mode:
-            for name in self.open_modules:
-                self.backbone.get_submodule(name).train(True)
-        if self.settings["freeze_bn"]:
-            for module in self.backbone.modules():
-                if isinstance(module, nn.modules.batchnorm._BatchNorm):
-                    module.eval()
+
+        if self.stage !="full" :
+            self.backbone.eval()
+            if mode:
+                for name in self.open_modules:
+                    self.backbone.get_submodule(name).train(True)
+            if self.settings["freeze_bn"]:
+                for module in self.backbone.modules():
+                    if isinstance(module, nn.modules.batchnorm._BatchNorm):
+                        module.eval()
         return self
 
 
