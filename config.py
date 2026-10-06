@@ -2,7 +2,7 @@ from pathlib import Path
 
 # File on the remote machine
 DATASET = "inaturalist19_h" #small_collemboles or inaturalist19_h
-DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h
+DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h"
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
 INAT_HIERARCHY_FILE = DATASET_ROOT / "metadata" / "inaturalist19_isa.txt" #Used hierarchy
 INAT_CATEGORIES_FILE = Path.home() / "datasets" / "inaturalist-19" / "categories.json"
