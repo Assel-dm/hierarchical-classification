@@ -150,9 +150,9 @@ def build_html(records, overall, seed_summary, output_path):
     campaign = str(overall.campaign.iloc[0]) if "campaign" in overall and len(overall) else "Campagne"
 
     page = r"""<!doctype html>
-<html lang="fr"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ · résultats</title>
+<title>__TITLE__ · results</title>
 <style>
 :root{--ink:#172d3d;--muted:#5d7080;--line:#dce5ea;--accent:#007d79}
 *{box-sizing:border-box}body{margin:0;background:#f4f7f9;color:var(--ink);font:15px/1.5 system-ui,sans-serif}
@@ -178,40 +178,40 @@ tbody tr:hover{background:#f1faf9}.small{font-size:12px;color:var(--muted)}
 @media(max-width:760px){main{padding:18px 12px}.card{padding:16px}.grid{grid-template-columns:1fr}
 .plot{height:330px}.learning{height:auto;min-height:270px}#run{width:100%}.controls>label{max-width:100%}}
 </style><script>__PLOTLY__</script></head><body><main>
-<header><div class="eyebrow">CLASSIFICATION HIÉRARCHIQUE · RAPPORT HORS LIGNE</div>
+<header><div class="eyebrow">HIERARCHICAL CLASSIFICATION · OFFLINE REPORT</div>
 <h1>__TITLE__</h1><p id="context"></p>
-<nav><a href="#learning-section">Courbes</a><a href="#comparison-section">Comparaisons</a>
-<a href="#species-section">Espèces</a></nav></header>
+<nav><a href="#learning-section">Learning curves</a><a href="#comparison-section">Comparisons</a>
+<a href="#species-section">Species</a></nav></header>
 <section class="card" id="learning-section"><h2>Learning curves</h2>
-<p>Un run à la fois : les échelles des losses dépendent de la méthode et de son paramètre.</p>
+<p>One run at a time: loss scales depend on the objective and its parameter.</p>
 <div class="controls"><label>Run<select id="run"></select></label>
-<label>Split d'évaluation<select id="split"></select></label></div>
+<label>Evaluation split<select id="split"></select></label></div>
 <div class="note" id="run-note"></div>
 <h3 style="margin-top:20px">Loss</h3><div id="loss" class="plot learning"></div>
-<div class="grid"><div><h3>Accuracy top-1</h3><div id="accuracy" class="plot learning"></div></div>
-<div><h3>Accuracy top-5</h3><div id="top5" class="plot learning"></div></div></div>
-<p class="small">Valeurs originales des historiques, sans lissage. Trait vertical : meilleur checkpoint selon la loss de validation.
-Les métriques finales ci-dessous correspondent à ce checkpoint, pas forcément à la dernière epoch.</p></section>
-<section class="card" id="comparison-section"><h2>Comparaison des méthodes</h2>
-<p>Les comparaisons utilisent le split sélectionné. Couleur = méthode ; survol = run.</p>
-<div class="grid"><div><h3>Erreur et sévérité</h3><div id="tradeoff" class="plot"></div></div>
-<div><h3>Accuracy by taxonomic rank · run sélectionné</h3><div id="ranks" class="plot"></div></div></div>
-<p class="small">Sévérité : distance moyenne parmi les erreurs. Distance @1 : moyenne sur toutes les images.
-Dans le graphique de gauche, les valeurs faibles sur les deux axes sont préférables.</p>
-<div id="metrics" class="table-wrap"></div><h3 style="margin-top:24px">Moyenne et écart-type entre seeds</h3>
-<p class="small">Avec une seule seed, l'écart-type est indiqué par « — ».</p><div id="summary" class="table-wrap"></div></section>
+<div class="grid"><div><h3>Top-1 accuracy</h3><div id="accuracy" class="plot learning"></div></div>
+<div><h3>Top-5 accuracy</h3><div id="top5" class="plot learning"></div></div></div>
+<p class="small">Original history values, without smoothing. Vertical line: best checkpoint according to validation loss.
+The final metrics below refer to this checkpoint, which may differ from the last epoch.</p></section>
+<section class="card" id="comparison-section"><h2>Method comparison</h2>
+<p>Comparisons use the selected split. Color = method; hover = run.</p>
+<div class="grid"><div><h3>Error and severity</h3><div id="tradeoff" class="plot"></div></div>
+<div><h3>Accuracy by taxonomic rank · selected run</h3><div id="ranks" class="plot"></div></div></div>
+<p class="small">Severity: mean hierarchical distance among misclassified images. Distance @1: mean over all images.
+Lower values on both axes are preferable in the left chart.</p>
+<div id="metrics" class="table-wrap"></div><h3 style="margin-top:24px">Mean and standard deviation across seeds</h3>
+<p class="small">With only one seed, standard deviation is shown as “—”.</p><div id="summary" class="table-wrap"></div></section>
 <section class="card" id="species-section"><h2>F1 by species</h2>
-<p>Analyse du run et du split sélectionnés. Rechercher un identifiant natXXXX ou un nom scientifique.</p>
-<div class="controls"><label>Classement<select id="order">
-<option value="worst">F1 les plus faibles</option><option value="best">F1 les plus élevés</option></select></label>
-<label>Recherche<input id="search" type="search" placeholder="nat0014, nom d'espèce…"></label></div>
+<p>Analysis of the selected run and split. Search for a natXXXX identifier or a scientific name.</p>
+<div class="controls"><label>Ranking<select id="order">
+<option value="worst">Lowest F1</option><option value="best">Highest F1</option></select></label>
+<label>Search<input id="search" type="search" placeholder="nat0014, scientific name…"></label></div>
 <div id="class-stats" class="stats"></div>
-<div class="grid"><div><h3>25 espèces du classement</h3><div id="classes" class="plot"></div></div>
-<div><h3>Distribution des F1</h3><div id="distribution" class="plot"></div>
-<p class="small">Distribution sur toutes les espèces. Les points à F1 = 0 sont affichés explicitement.</p></div></div>
+<div class="grid"><div><h3>25 species from the ranking</h3><div id="classes" class="plot"></div></div>
+<div><h3>F1 distribution</h3><div id="distribution" class="plot"></div>
+<p class="small">Distribution across all species. Points at F1 = 0 are shown explicitly.</p></div></div>
 <p id="class-count" class="small"></p><div id="class-table" class="table-wrap"></div></section>
-<footer class="small">Rapport autonome : aucune connexion internet nécessaire. Export PNG disponible dans la barre de chaque graphique.
-Les CSV complets restent disponibles dans les dossiers runs/ et reports/.</footer>
+<footer class="small">Standalone report: no internet connection required. PNG export is available in each chart toolbar.
+Complete CSV files remain available in the runs/ and reports/ folders.</footer>
 </main><script id="report-data" type="application/json">__DATA__</script><script>
 const report=JSON.parse(document.getElementById('report-data').textContent);
 const el=id=>document.getElementById(id);
@@ -235,8 +235,8 @@ function selectedRun(){return report.runs[Number(el('run').value)];}
 function renderLearning(){
     const run=selectedRun(), history=run?.history??[];
     const best=history.filter(r=>r.val_loss!=null).reduce((a,b)=>!a||b.val_loss<a.val_loss?b:a,null);
-    el('run-note').textContent=best?'Meilleur checkpoint : epoch '+best.epoch+
-        ' / '+history.length+' · loss validation '+fmt(best.val_loss):'Historique non disponible.';
+    el('run-note').textContent=best?'Best checkpoint: epoch '+best.epoch+
+        ' / '+history.length+' · validation loss '+fmt(best.val_loss):'History not available.';
     for(const [id,column,percent] of [['loss','loss',false],['accuracy','accuracy',true],['top5','top5_accuracy',true]]){
         const values=history.flatMap(r=>[r[column],r['val_'+column]]).filter(v=>Number.isFinite(v));
         const low=values.length?Math.min(...values):0, high=values.length?Math.max(...values):1;
@@ -258,20 +258,20 @@ function renderComparison(){
         const rows=scores.filter(r=>r.variant===variant);
         return {type:'scatter',mode:'markers',name:variant.toUpperCase(),x:rows.map(r=>r.top1_error),
             y:rows.map(r=>r.mistake_severity),text:rows.map(r=>r.label),marker:{size:11,color:colors[variant]},
-            hovertemplate:'%{text}<br>Erreur %{x:.2%}<br>Sévérité %{y:.3f}<extra></extra>'};
-    }),{xaxis:{title:'Erreur top-1',tickformat:'.0%',gridcolor:'#e8eef2'},
-        yaxis:{title:'Sévérité des erreurs',gridcolor:'#e8eef2'}});
+            hovertemplate:'%{text}<br>Error %{x:.2%}<br>Severity %{y:.3f}<extra></extra>'};
+    }),{xaxis:{title:'Top-1 error',tickformat:'.0%',gridcolor:'#e8eef2'},
+        yaxis:{title:'Mistake severity',gridcolor:'#e8eef2'}});
     const run=selectedRun(), row=scores.find(r=>r.label===run?.label);
     const ranks=['kingdom','phylum','class','order','family','genus','species'].filter(rank=>row?.[rank+'_accuracy']!=null);
     draw('ranks',row?[{type:'scatter',mode:'lines+markers',x:ranks,y:ranks.map(rank=>row[rank+'_accuracy']),
         name:row.label,line:{color:colors[row.variant]??'#246eb9'},hovertemplate:'%{x}<br>%{y:.2%}<extra></extra>'}]:[],
         {showlegend:false,yaxis:{title:'Accuracy',range:[0,1],tickformat:'.0%',gridcolor:'#e8eef2'}});
-    table('metrics',['Run','Top-1','Top-5','F1 macro','Sévérité','Distance @1'],scores.map(r=>
+    table('metrics',['Run','Top-1','Top-5','Macro F1','Severity','Distance @1'],scores.map(r=>
         [r.label,fmt(r.top1_accuracy,true),fmt(r.top5_accuracy,true),fmt(r.f1_macro,true),
          fmt(r.mistake_severity),fmt(r['avg_hierarchical_distance@1'])]));
     const summary=report.summary.filter(r=>r.split===el('split').value);
     const stat=(r,key,percent=false)=>fmt(r[key+'_mean'],percent)+' ± '+fmt(r[key+'_std'],percent);
-    table('summary',['Variante / phase','Seeds','Top-1','F1 macro','Sévérité'],summary.map(r=>
+    table('summary',['Variant / phase','Seeds','Top-1','Macro F1','Severity'],summary.map(r=>
         [r.variant.toUpperCase()+(r.parameter==null?'':' '+r.parameter)+' · '+r.stage,r.n_seeds,
          stat(r,'top1_accuracy',true),stat(r,'f1_macro',true),stat(r,'mistake_severity')]));
 }
@@ -291,14 +291,14 @@ function renderClasses(){
     for(const row of all) bins[Math.min(19,Math.floor(row.f1*20))]++;
     draw('distribution',[{type:'bar',x:bins.map((_,i)=>(i+.5)/20),y:bins,width:.048,
         customdata:bins.map((_,i)=>[i/20,(i+1)/20]),marker:{color:'#246eb9'},
-        hovertemplate:'F1 %{customdata[0]:.0%}–%{customdata[1]:.0%}<br>%{y} espèces<extra></extra>'}],
-        {showlegend:false,xaxis:{title:'F1',range:[0,1],tickformat:'.0%'},yaxis:{title:'Espèces',gridcolor:'#e8eef2'}});
-    el('class-stats').innerHTML=['Espèces : '+all.length,'F1 nul : '+all.filter(r=>r.f1===0).length,
-        'F1 macro : '+fmt(all.length?all.reduce((sum,r)=>sum+r.f1,0)/all.length:null,true)]
+        hovertemplate:'F1 %{customdata[0]:.0%}–%{customdata[1]:.0%}<br>%{y} species<extra></extra>'}],
+        {showlegend:false,xaxis:{title:'F1',range:[0,1],tickformat:'.0%'},yaxis:{title:'Species',gridcolor:'#e8eef2'}});
+    el('class-stats').innerHTML=['Species: '+all.length,'Zero F1: '+all.filter(r=>r.f1===0).length,
+        'Macro F1: '+fmt(all.length?all.reduce((sum,r)=>sum+r.f1,0)/all.length:null,true)]
         .map(text=>'<span class="stat">'+esc(text)+'</span>').join('');
-    el('class-count').textContent=Math.min(sorted.length,50)+' lignes affichées sur '+sorted.length+
-        '. La recherche parcourt toutes les espèces ; le CSV conserve la liste complète.';
-    table('class-table',['Espèce','Nom scientifique','Support','Précision','Rappel','F1'],sorted.slice(0,50).map(r=>
+    el('class-count').textContent=Math.min(sorted.length,50)+' rows shown out of '+sorted.length+
+        '. Search covers all species; the CSV retains the full list.';
+    table('class-table',['Species','Scientific name','Support','Precision','Recall','F1'],sorted.slice(0,50).map(r=>
         [r.species,r.species_name,r.support,fmt(r.precision,true),fmt(r.recall,true),fmt(r.f1,true)]));
 }
 function refresh(){renderLearning();renderComparison();renderClasses();}
@@ -307,7 +307,8 @@ const splits=[...new Set(report.scores.map(r=>r.split))];
 el('split').innerHTML=(splits.length?splits:['validation']).map(split=>'<option>'+esc(split)+'</option>').join('');
 el('split').value=splits.includes('validation')?'validation':splits[0]??'validation';
 const first=report.scores[0], seeds=new Set(report.scores.map(r=>r.seed));
-el('context').textContent=report.runs.length+' runs · '+seeds.size+' seeds'+
+el('context').textContent=report.runs.length+' run'+(report.runs.length===1?'':'s')+
+    ' · '+seeds.size+' seed'+(seeds.size===1?'':'s')+
     (first?' · '+first.model_key+' · '+first.augmentation:'');
 el('run').addEventListener('change',refresh);el('split').addEventListener('change',()=>{renderComparison();renderClasses();});
 el('order').addEventListener('change',renderClasses);el('search').addEventListener('input',renderClasses);
