@@ -20,8 +20,8 @@ from methods.mbm import build_loss, soft_label_statistics
 def main():
     # 1. Config check
     stage_order = ["frozen", "partial", "deeper"]
-    if not cfg.STAGES or cfg.STAGES != [stage for stage in stage_order if stage in cfg.STAGES]:
-        raise ValueError("STAGES must be in the order frozen, partial, deeper")
+    if cfg.STAGES != ["full"] and (not cfg.STAGES or cfg.stages != [stage for stage in stage_order if stage in cfg.STAGES]):
+        raise ValueError("STAGES must be ['full'] or in the order frozen, partial, deeper")
     if not cfg.SEEDS or any(type(seed) is not int or not 0 <= seed < 2**32 for seed in cfg.SEEDS):
         raise ValueError("SEEDS must contains integer in [0, 2**32)")
     if len(set(cfg.SEEDS)) != len(cfg.SEEDS) or len(set(cfg.EXPERIMENTS)) != len(cfg.EXPERIMENTS):
