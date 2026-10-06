@@ -327,7 +327,7 @@ def build_reports(campaign_dir):
     reports_dir = campaign_dir / "reports"
     reports_dir.mkdir(exist_ok=True)
     records, rows, class_tables = [], [], []
-    stage_order = {"frozen": 0, "partial": 1, "deeper": 2}
+    stage_order = {"frozen": 0, "partial": 1, "deeper": 2, "full":3,}
     paths = sorted((campaign_dir / "runs").glob("*/*/metadata.json"),
                    key=lambda path: (path.parent.parent.name, stage_order[path.parent.name]))
     for path in paths:
