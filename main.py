@@ -139,17 +139,24 @@ def main():
                 check_configuration(run_dir / "metadata.json", metadata)
                 print(f"\n{variant_name} | seed {seed} | {stage}")
                 seed_everything(seed)
-                new_frozen = stage == "frozen" and not (run_dir / "last.pt").exists() and not (run_dir / "complete.json").exists()
-                model = SpeciesClassifier(settings, len(data["species"]),
-                                          pretrained=cfg.PRETRAINED and cfg.RUN_TRAINING and new_frozen)
+                new_initial = (stage in ("frozen", "full") and not (run_dir / "last.pt").exists() and not (run_dir / "complete.json").exists())
+                pretrained=cfg.PRETRAINED and cfg.RUN_TRAINING and new_initial
+                model = SpeciesClassifier(settings, len(data["species"]),pretrained=pretrained)
                 model.set_stage(stage)
                 model.to(device)
+                
+                # report the number of trainable parameters
+                trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                total = sum(p.numel() for p in model.parameters())
+                print (f"Trainable parameters: {trainable:,}/{total:,}"
+                       f"({100* trainable / total:.1f}%)")
+                
                 criterion = build_loss(variant, parameter, data, getattr(cfg,"HXE_NORMALIZE_WEIGHTS", False),).to(device)
                 loaders = build_loaders(data, settings, cfg.BATCH_SIZE, cfg.NUM_WORKERS,
                                         seed, cfg.AUGMENTATION, device)
 
                 # The unfreeze start back from the best weights of the previous phase
-                if cfg.RUN_TRAINING and stage != "frozen" and not (run_dir / "last.pt").exists() and not (run_dir / "complete.json").exists():
+                if cfg.RUN_TRAINING and stage in("partial", "deeper") and not (run_dir / "last.pt").exists() and not (run_dir / "complete.json").exists():
                     source_stage = stage_order[stage_order.index(stage) - 1]
                     source_dir = experiment_dir / source_stage
                     if not (source_dir / "complete.json").exists():
