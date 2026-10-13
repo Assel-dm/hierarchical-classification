@@ -7,7 +7,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, PercentFormatter
 
 
 def save_figure(fig, path):
@@ -129,270 +129,390 @@ def plot_augmentation_preview(image_path, transforms, settings, output_path):
         ax.axis("off")
     save_figure(fig, output_path)
 
+def draw_tradeoff(ax, table, metric):
+    """Plot parameter sweeps with seed means and standard deviations."""
+    names = {"ce": "CE", "soft": "Soft Labels", "hxe": "HXE", "haf": "HAF"}
+    colors = {
+        "ce": "#252525",
+        "soft": "#e28b20",
+        "hxe": "#007d79",
+        "haf": "#7756a8",
+    }
+    styles = {"frozen": ":", "partial": "--", "deeper": "-.", "full": "--"}
+    groups = [
+        key for key in ("model_key", "augmentation", "stage", "variant")
+        if key in table
+    ]
+    varying = [
+        key for key in groups
+        if key != "variant" and table[key].nunique() > 1
+    ]
+
+    for _, selected in table.groupby(groups, dropna=False):
+        selected = selected.dropna(subset=["top1_error", metric])
+        if selected.empty:
+            continue
+
+        variant = selected.variant.iloc[0]
+        label = names.get(variant, variant.upper().replace("_", " "))
+        label += "".join(f" · {selected[key].iloc[0]}" for key in varying)
+        color = colors.get(variant)
+
+        points = selected.groupby("parameter", dropna=False)[
+            ["top1_error", metric]
+        ].agg(["mean", "std"]).sort_index()
+
+        x = points[("top1_error", "mean")]
+        y = points[(metric, "mean")]
+        multiple_seeds = (
+            selected.groupby("parameter", dropna=False).seed.nunique().max() > 1
+        )
+
+        ax.errorbar(
+            x, y,
+            xerr=points[("top1_error", "std")].fillna(0)
+                 if multiple_seeds else None,
+            yerr=points[(metric, "std")].fillna(0)
+                 if multiple_seeds else None,
+            fmt="*" if variant == "ce" else "o",
+            color=color,
+            linestyle=styles.get(selected.stage.iloc[0], "--")
+                      if variant in ("soft", "hxe") else "none",
+            markersize=10 if variant == "ce" else 7,
+            capsize=3,
+            linewidth=1.3,
+            alpha=.9,
+            label=label,
+        )
+
+        # Alternate label positions to improve readability.
+        offsets = (
+            [(5, -16), (5, 9)] if variant == "hxe"
+            else [(5, 9), (5, -16)]
+        )
+        for index, (parameter, xx, yy) in enumerate(zip(points.index, x, y)):
+            if variant in ("soft", "hxe") and pd.notna(parameter):
+                text = f"{'β' if variant == 'soft' else 'α'}={parameter:g}"
+            elif variant == "ce":
+                text = "CE"
+            else:
+                continue
+
+            ax.annotate(
+                text, (xx, yy),
+                xytext=offsets[index % 2],
+                textcoords="offset points",
+                fontsize=9,
+                color=color,
+                bbox=dict(
+                    facecolor="white", edgecolor="none", alpha=.8, pad=1
+                ),
+            )
+
+    ylabel = (
+        "Mistake severity" if metric == "mistake_severity"
+        else f"Average hierarchical distance @{metric.split('@')[-1]}"
+    )
+    ax.set(xlabel="Top-1 error", ylabel=ylabel)
+    ax.xaxis.set_major_formatter(PercentFormatter(xmax=1))
+    ax.margins(x=.15, y=.18)
+    ax.grid(alpha=.2)
+    ax.legend(fontsize=9)
+
 
 def build_html(records, overall, seed_summary, output_path):
     """Build HTML report with Plotly"""
-    def rows(frame):
-        return json.loads(frame.to_json(orient="records", double_precision=15))
+    import base64
+    from html import escape
 
-    runs = []
+    output_path = Path(output_path)
+    reports_dir = output_path.parent
+    campaign = reports_dir.parent.name
+
+    def picture(path, caption):
+        if not path.exists():
+            return ""
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return (
+            f'<figure><figcaption>{escape(caption)}</figcaption>'
+            f'<img src="data:image/png;base64,{encoded}" '
+            f'alt="{escape(caption)}" loading="lazy"></figure>'
+        )
+
+    def table(frame):
+        if frame.empty:
+            return "<p>No saved data available.</p>"
+        return '<div class="table-wrap">' + frame.to_html(
+            index=False,
+            escape=True,
+            na_rep="—",
+            float_format=lambda value: f"{value:.4f}",
+        ) + "</div>"
+
+    parts = [
+        f"<h1>{escape(campaign)}</h1>",
+        "<p>Offline report generated from saved results. "
+        "PNGs are embedded in this file.</p>",
+        '<nav><a href="#comparison">Comparisons</a> · '
+        '<a href="#runs">Runs and species</a> · '
+        '<a href="#metrics">Overall metrics</a> · '
+        '<a href="#seeds">Across seeds</a></nav>',
+        '<h2 id="comparison">Method comparison</h2>',
+        "<p>Lower values on both axes are preferable. Points show seed means; "
+        "error bars show standard deviations when multiple seeds are available. "
+        "Lines follow the hyperparameter order. Different stages and training "
+        "settings have separate curves.</p>",
+    ]
+
+    if not overall.empty:
+        missing = (
+            overall["avg_hierarchical_distance@20"].isna().sum()
+            if "avg_hierarchical_distance@20" in overall else len(overall)
+        )
+        if missing:
+            parts.append(
+                f'<p class="note">Distance @20 is missing for {missing} '
+                "evaluated runs. Re-evaluate these runs to add this metric.</p>"
+            )
+
+        for split in overall.split.unique():
+            parts.append(f"<h3>{escape(str(split).capitalize())}</h3>")
+            parts.append(picture(
+                reports_dir / f"comparison_{split}.png",
+                "Species accuracy and mistake severity",
+            ))
+            for k in (1, 5, 20):
+                parts.append(picture(
+                    reports_dir / f"avg_hierarchical_distance_{k}_{split}.png",
+                    f"Top-1 error versus average hierarchical distance @{k}",
+                ))
+    else:
+        parts.append(
+            "<p>No saved evaluation results. "
+            "Run an evaluation before comparing methods.</p>"
+        )
+
+    parts += [
+        '<h2 id="runs">Learning curves and F1 by species</h2>',
+        "<p>Expand a run to view its figures. Curves use the original history "
+        "values without smoothing. Loss scales depend on the objective and its "
+        "parameter; compare them within the same objective. Saved evaluation "
+        "metrics refer to the selected checkpoint.</p>",
+    ]
+
     for record in records:
-        classes = {}
-        for split, table in record["classes"].items():
-            columns = [name for name in ("species", "species_name", "precision",
-                       "recall", "f1", "support") if name in table]
-            classes[split] = rows(table[columns])
-        runs.append({"label": record["label"],
-                     "history": rows(record["history"]) if record["history"] is not None else [],
-                     "classes": classes})
-    payload = {"runs": runs, "scores": rows(overall), "summary": rows(seed_summary)}
-    data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c")
-    campaign = str(overall.campaign.iloc[0]) if "campaign" in overall and len(overall) else "Campagne"
+        run_dir = record["run_dir"]
+        parts.append(
+            f'<details><summary>{escape(record["label"])}</summary>'
+        )
 
-    page = r"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ · results</title>
-<style>
-:root{--ink:#172d3d;--muted:#5d7080;--line:#dce5ea;--accent:#007d79}
-*{box-sizing:border-box}body{margin:0;background:#f4f7f9;color:var(--ink);font:15px/1.5 system-ui,sans-serif}
-main{max-width:1250px;margin:auto;padding:30px 22px 60px}
-h1{font-size:30px;line-height:1.2;margin:8px 0;overflow-wrap:anywhere}h2{font-size:21px;margin:0 0 8px}
-h3{font-size:16px;margin:0 0 8px}p{margin:6px 0 14px;color:var(--muted)}
-.eyebrow{font-size:12px;letter-spacing:.14em;font-weight:750;color:var(--accent)}
-nav{display:flex;gap:16px;flex-wrap:wrap;margin:18px 0 25px}nav a{color:var(--accent);text-decoration:none}
-.card{background:white;border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:20px}
-.controls{display:flex;gap:16px;flex-wrap:wrap;align-items:end;margin:14px 0}
-label{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:650}
-select,input{font:inherit;border:1px solid #bccbd4;border-radius:7px;padding:9px;background:white;color:var(--ink);max-width:100%}
-#run{width:440px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.grid>div{min-width:0}
-.plot{width:100%;height:390px}.learning{height:auto;aspect-ratio:9/4;min-height:260px;max-height:470px}
-#classes{height:640px}#distribution{height:320px}
-.note{font-size:13px;background:#eef7f6;padding:12px 15px;border-radius:8px}
-.stats{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}.stat{background:#f4f7f9;border-radius:7px;padding:8px 12px}
-.table-wrap{overflow:auto;max-height:460px;border:1px solid var(--line);border-radius:8px}
-table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
-th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
-th{position:sticky;top:0;background:#edf3f6;z-index:1}th:first-child,td:first-child{text-align:left}
-tbody tr:hover{background:#f1faf9}.small{font-size:12px;color:var(--muted)}
-@media(max-width:760px){main{padding:18px 12px}.card{padding:16px}.grid{grid-template-columns:1fr}
-.plot{height:330px}.learning{height:auto;min-height:270px}#run{width:100%}.controls>label{max-width:100%}}
-</style><script>__PLOTLY__</script></head><body><main>
-<header><div class="eyebrow">HIERARCHICAL CLASSIFICATION · OFFLINE REPORT</div>
-<h1>__TITLE__</h1><p id="context"></p>
-<nav><a href="#learning-section">Learning curves</a><a href="#comparison-section">Comparisons</a>
-<a href="#species-section">Species</a></nav></header>
-<section class="card" id="learning-section"><h2>Learning curves</h2>
-<p>One run at a time: loss scales depend on the objective and its parameter.</p>
-<div class="controls"><label>Run<select id="run"></select></label>
-<label>Evaluation split<select id="split"></select></label></div>
-<div class="note" id="run-note"></div>
-<h3 style="margin-top:20px">Loss</h3><div id="loss" class="plot learning"></div>
-<div class="grid"><div><h3>Top-1 accuracy</h3><div id="accuracy" class="plot learning"></div></div>
-<div><h3>Top-5 accuracy</h3><div id="top5" class="plot learning"></div></div></div>
-<p class="small">Original history values, without smoothing. Vertical line: best checkpoint according to validation loss.
-The final metrics below refer to this checkpoint, which may differ from the last epoch.</p></section>
-<section class="card" id="comparison-section"><h2>Method comparison</h2>
-<p>Comparisons use the selected split. Color = method; hover = run.</p>
-<div class="grid"><div><h3>Error and severity</h3><div id="tradeoff" class="plot"></div></div>
-<div><h3>Accuracy by taxonomic rank · selected run</h3><div id="ranks" class="plot"></div></div></div>
-<p class="small">Severity: mean hierarchical distance among misclassified images. Distance @1: mean over all images.
-Lower values on both axes are preferable in the left chart.</p>
-<div id="metrics" class="table-wrap"></div><h3 style="margin-top:24px">Mean and standard deviation across seeds</h3>
-<p class="small">With only one seed, standard deviation is shown as “—”.</p><div id="summary" class="table-wrap"></div></section>
-<section class="card" id="species-section"><h2>F1 by species</h2>
-<p>Analysis of the selected run and split. Search for a natXXXX identifier or a scientific name.</p>
-<div class="controls"><label>Ranking<select id="order">
-<option value="worst">Lowest F1</option><option value="best">Highest F1</option></select></label>
-<label>Search<input id="search" type="search" placeholder="nat0014, scientific name…"></label></div>
-<div id="class-stats" class="stats"></div>
-<div class="grid"><div><h3>25 species from the ranking</h3><div id="classes" class="plot"></div></div>
-<div><h3>F1 distribution</h3><div id="distribution" class="plot"></div>
-<p class="small">Distribution across all species. Points at F1 = 0 are shown explicitly.</p></div></div>
-<p id="class-count" class="small"></p><div id="class-table" class="table-wrap"></div></section>
-<footer class="small">Standalone report: no internet connection required. PNG export is available in each chart toolbar.
-Complete CSV files remain available in the runs/ and reports/ folders.</footer>
-</main><script id="report-data" type="application/json">__DATA__</script><script>
-const report=JSON.parse(document.getElementById('report-data').textContent);
-const el=id=>document.getElementById(id);
-const colors={ce:'#246eb9',soft:'#e28b20',hxe:'#007d79'};
-const esc=value=>String(value??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt=(v,percent=false)=>v==null||!Number.isFinite(Number(v))?'—':percent?(100*v).toFixed(2)+' %':Number(v).toFixed(3);
-const config={responsive:true,displaylogo:false,toImageButtonOptions:{format:'png',scale:2}};
-function draw(id,traces,extra={}){
-    return Plotly.react(id,traces,{autosize:true,paper_bgcolor:'white',plot_bgcolor:'white',
-        font:{family:'system-ui, sans-serif',size:12,color:'#172d3d'},margin:{l:60,r:20,t:30,b:65},
-        xaxis:{gridcolor:'#e8eef2',zeroline:false,automargin:true},
-        yaxis:{gridcolor:'#e8eef2',zeroline:false,automargin:true},
-        legend:{orientation:'h',x:0,y:1.15},hovermode:'closest',...extra},config);
-}
-function table(id,headers,values){
-    el(id).innerHTML='<table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join('')+
-        '</tr></thead><tbody>'+values.map(row=>'<tr>'+row.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+
-        '</tbody></table>';
-}
-function selectedRun(){return report.runs[Number(el('run').value)];}
-function renderLearning(){
-    const run=selectedRun(), history=run?.history??[];
-    const best=history.filter(r=>r.val_loss!=null).reduce((a,b)=>!a||b.val_loss<a.val_loss?b:a,null);
-    el('run-note').textContent=best?'Best checkpoint: epoch '+best.epoch+
-        ' / '+history.length+' · validation loss '+fmt(best.val_loss):'History not available.';
-    for(const [id,column,percent] of [['loss','loss',false],['accuracy','accuracy',true],['top5','top5_accuracy',true]]){
-        const values=history.flatMap(r=>[r[column],r['val_'+column]]).filter(v=>Number.isFinite(v));
-        const low=values.length?Math.min(...values):0, high=values.length?Math.max(...values):1;
-        const pad=Math.max((high-low)*.05,Math.abs(high)*.005,1e-6);
-        const traces=[['Train',column,'#246eb9','solid'],['Validation','val_'+column,'#e28b20','dash']].map(([name,key,color,dash])=>
-            ({x:history.map(r=>r.epoch),y:history.map(r=>r[key]),name,type:'scatter',mode:'lines',
-              line:{color,dash,width:2.5},hovertemplate:percent?'Epoch %{x}<br>%{y:.2%}<extra>%{fullData.name}</extra>':
-              'Epoch %{x}<br>%{y:.5f}<extra>%{fullData.name}</extra>'}));
-        draw(id,traces,{xaxis:{title:'Epoch',dtick:history.length<=12?1:undefined,gridcolor:'#e8eef2',automargin:true},
-            yaxis:{title:percent?'Accuracy':'Loss',tickformat:percent?'.0%':undefined,range:[low-pad,high+pad],gridcolor:'#e8eef2'},
-            shapes:best?[{type:'line',x0:best.epoch,x1:best.epoch,y0:0,y1:1,yref:'paper',
-                line:{color:'#9baab5',dash:'dot',width:1}}]:[]});
-    }
-}
-function renderComparison(){
-    const scores=report.scores.filter(r=>r.split===el('split').value);
-    const variants=[...new Set(scores.map(r=>r.variant))];
-    draw('tradeoff',variants.map(variant=>{
-        const rows=scores.filter(r=>r.variant===variant);
-        return {type:'scatter',mode:'markers',name:variant.toUpperCase(),x:rows.map(r=>r.top1_error),
-            y:rows.map(r=>r.mistake_severity),text:rows.map(r=>r.label),marker:{size:11,color:colors[variant]},
-            hovertemplate:'%{text}<br>Error %{x:.2%}<br>Severity %{y:.3f}<extra></extra>'};
-    }),{xaxis:{title:'Top-1 error',tickformat:'.0%',gridcolor:'#e8eef2'},
-        yaxis:{title:'Mistake severity',gridcolor:'#e8eef2'}});
-    const run=selectedRun(), row=scores.find(r=>r.label===run?.label);
-    const ranks=['kingdom','phylum','class','order','family','genus','species'].filter(rank=>row?.[rank+'_accuracy']!=null);
-    draw('ranks',row?[{type:'scatter',mode:'lines+markers',x:ranks,y:ranks.map(rank=>row[rank+'_accuracy']),
-        name:row.label,line:{color:colors[row.variant]??'#246eb9'},hovertemplate:'%{x}<br>%{y:.2%}<extra></extra>'}]:[],
-        {showlegend:false,yaxis:{title:'Accuracy',range:[0,1],tickformat:'.0%',gridcolor:'#e8eef2'}});
-    table('metrics',['Run','Top-1','Top-5','Macro F1','Severity','Distance @1'],scores.map(r=>
-        [r.label,fmt(r.top1_accuracy,true),fmt(r.top5_accuracy,true),fmt(r.f1_macro,true),
-         fmt(r.mistake_severity),fmt(r['avg_hierarchical_distance@1'])]));
-    const summary=report.summary.filter(r=>r.split===el('split').value);
-    const stat=(r,key,percent=false)=>fmt(r[key+'_mean'],percent)+' ± '+fmt(r[key+'_std'],percent);
-    table('summary',['Variant / phase','Seeds','Top-1','Macro F1','Severity'],summary.map(r=>
-        [r.variant.toUpperCase()+(r.parameter==null?'':' '+r.parameter)+' · '+r.stage,r.n_seeds,
-         stat(r,'top1_accuracy',true),stat(r,'f1_macro',true),stat(r,'mistake_severity')]));
-}
-function renderClasses(){
-    const all=selectedRun()?.classes[el('split').value]??[], query=el('search').value.trim().toLowerCase();
-    const sorted=all.filter(r=>(r.species+' '+(r.species_name??'')).toLowerCase().includes(query))
-        .sort((a,b)=>(el('order').value==='worst'?a.f1-b.f1:b.f1-a.f1)||a.species.localeCompare(b.species));
-    const top=sorted.slice(0,25), names=top.map(r=>r.species_name?r.species+' · '+r.species_name:r.species);
-    const labels=names.map(name=>name.length>34?name.slice(0,32)+'…':name);
-    draw('classes',[{type:'bar',orientation:'h',x:top.map(r=>r.f1),y:labels,customdata:top.map((r,i)=>[names[i],r.support]),
-        marker:{color:'#007d79'},hovertemplate:'%{customdata[0]}<br>F1 %{x:.2%}<br>Support %{customdata[1]}<extra></extra>'},
-        {type:'scatter',mode:'markers+text',x:top.map(r=>r.f1),y:labels,text:top.map(r=>fmt(r.f1,true)),
-         textposition:'middle right',marker:{size:5,color:'#007d79'},hoverinfo:'skip'}],
-        {showlegend:false,margin:{l:160,r:50,t:15,b:50},xaxis:{title:'F1',range:[-.02,1.15],tickvals:[0,.25,.5,.75,1],tickformat:'.0%',gridcolor:'#e8eef2'},
-         yaxis:{autorange:'reversed',automargin:true}});
-    const bins=Array(20).fill(0);
-    for(const row of all) bins[Math.min(19,Math.floor(row.f1*20))]++;
-    draw('distribution',[{type:'bar',x:bins.map((_,i)=>(i+.5)/20),y:bins,width:.048,
-        customdata:bins.map((_,i)=>[i/20,(i+1)/20]),marker:{color:'#246eb9'},
-        hovertemplate:'F1 %{customdata[0]:.0%}–%{customdata[1]:.0%}<br>%{y} species<extra></extra>'}],
-        {showlegend:false,xaxis:{title:'F1',range:[0,1],tickformat:'.0%'},yaxis:{title:'Species',gridcolor:'#e8eef2'}});
-    el('class-stats').innerHTML=['Species: '+all.length,'Zero F1: '+all.filter(r=>r.f1===0).length,
-        'Macro F1: '+fmt(all.length?all.reduce((sum,r)=>sum+r.f1,0)/all.length:null,true)]
-        .map(text=>'<span class="stat">'+esc(text)+'</span>').join('');
-    el('class-count').textContent=Math.min(sorted.length,50)+' rows shown out of '+sorted.length+
-        '. Search covers all species; the CSV retains the full list.';
-    table('class-table',['Species','Scientific name','Support','Precision','Recall','F1'],sorted.slice(0,50).map(r=>
-        [r.species,r.species_name,r.support,fmt(r.precision,true),fmt(r.recall,true),fmt(r.f1,true)]));
-}
-function refresh(){renderLearning();renderComparison();renderClasses();}
-el('run').innerHTML=report.runs.map((run,i)=>'<option value="'+i+'">'+esc(run.label)+'</option>').join('');
-const splits=[...new Set(report.scores.map(r=>r.split))];
-el('split').innerHTML=(splits.length?splits:['validation']).map(split=>'<option>'+esc(split)+'</option>').join('');
-el('split').value=splits.includes('validation')?'validation':splits[0]??'validation';
-const first=report.scores[0], seeds=new Set(report.scores.map(r=>r.seed));
-el('context').textContent=report.runs.length+' run'+(report.runs.length===1?'':'s')+
-    ' · '+seeds.size+' seed'+(seeds.size===1?'':'s')+
-    (first?' · '+first.model_key+' · '+first.augmentation:'');
-el('run').addEventListener('change',refresh);el('split').addEventListener('change',()=>{renderComparison();renderClasses();});
-el('order').addEventListener('change',renderClasses);el('search').addEventListener('input',renderClasses);
-refresh();
-</script></body></html>"""
-    page = page.replace("__TITLE__", escape(campaign)).replace("__DATA__", data)
-    page = page.replace("__PLOTLY__", get_plotlyjs())
-    Path(output_path).write_text(page, encoding="utf-8")
+        for metric, title in (
+            ("loss", "Loss"),
+            ("accuracy", "Top-1 accuracy"),
+            ("top5_accuracy", "Top-5 accuracy"),
+            ("ce", "HAF CE"),
+            ("shc", "HAF SHC"),
+            ("margin", "HAF margin"),
+            ("gc", "HAF GC"),
+        ):
+            parts.append(picture(
+                run_dir / "figures" / f"learning_{metric}.png", title
+            ))
+
+        for split, classes in record["classes"].items():
+            parts.append(picture(
+                run_dir / "figures" / f"per_class_{split}.png",
+                f"Lowest species F1 · {split}",
+            ))
+            parts.append(picture(
+                run_dir / "figures" / f"confusion_{split}.png",
+                f"Confusion matrix · {split}",
+            ))
+            columns = [
+                key for key in (
+                    "species", "species_name", "support",
+                    "precision", "recall", "f1"
+                )
+                if key in classes
+            ]
+            parts.append(table(
+                classes.sort_values("f1").head(25)[columns]
+            ))
+
+        parts.append("</details>")
+
+    parts += [
+        '<h2 id="metrics">Overall metrics</h2>',
+        table(overall),
+        '<h2 id="seeds">Mean and standard deviation across seeds</h2>',
+        table(seed_summary),
+        "<p>Single-seed standard deviations appear as “—”. "
+        "Complete CSV files remain in runs/ and reports/.</p>",
+        "<h2>Dataset distribution</h2>",
+    ]
+
+    for path in sorted(reports_dir.glob("dataset_distribution*.png")):
+        parts.append(picture(
+            path, path.stem.replace("_", " ").capitalize()
+        ))
+    parts.append(picture(
+        reports_dir / "augmentation_preview.png", "Augmentation preview"
+    ))
+
+    css = """
+    body{font:15px/1.5 system-ui,sans-serif;color:#203340;
+         background:#f5f7f9;margin:0}
+    main{max-width:1050px;margin:auto;padding:24px}
+    h1{overflow-wrap:anywhere}h2{margin-top:32px}
+    nav,a{color:#007d79}
+    details,figure,.table-wrap{background:white;border:1px solid #dce4e8;
+                              border-radius:8px}
+    details{padding:16px;margin:12px 0}
+    summary{cursor:pointer;font-weight:600}
+    figure{margin:16px 0;padding:12px}
+    figcaption{font-weight:600;margin-bottom:8px}
+    img{display:block;width:100%;height:auto}
+    .table-wrap{overflow:auto;max-height:480px}
+    table{border-collapse:collapse;width:100%;font-size:13px}
+    th,td{padding:8px;white-space:nowrap;border-bottom:1px solid #e2e8ec}
+    th{position:sticky;top:0;background:#eef3f5}
+    .note{padding:12px;background:#fff2d9}
+    @media(max-width:600px){main{padding:12px}details{padding:10px}}
+    """
+
+    output_path.write_text(
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{escape(campaign)} · results</title><style>{css}</style></head>"
+        "<body><main>" + "".join(parts) + "</main></body></html>",
+        encoding="utf-8",
+    )
 
 
 def build_reports(campaign_dir):
     """Build graphics with available with available plots"""
-    campaign_dir = Path(campaign_dir)
+    campaign_dir = Path(campaign_dir).expanduser()
     if not campaign_dir.is_dir():
         raise FileNotFoundError(campaign_dir)
+
     reports_dir = campaign_dir / "reports"
     reports_dir.mkdir(exist_ok=True)
     records, rows, class_tables = [], [], []
-    stage_order = {"frozen": 0, "partial": 1, "deeper": 2, "full":3,}
-    paths = sorted((campaign_dir / "runs").glob("*/*/metadata.json"),
-                   key=lambda path: (path.parent.parent.name, stage_order[path.parent.name]))
+    stage_order = {"frozen": 0, "partial": 1, "deeper": 2, "full": 3}
+    paths = sorted(
+        (campaign_dir / "runs").glob("*/*/metadata.json"),
+        key=lambda path: (
+            path.parent.parent.name, stage_order[path.parent.name]
+        ),
+    )
+
     for path in paths:
         run_dir = path.parent
         metadata = json.loads(path.read_text(encoding="utf-8"))
         label = run_label(metadata)
         plot_learning_curves(run_dir, label)
         history_path = run_dir / "history.csv"
-        record = {"label": label, "history": pd.read_csv(history_path) if history_path.exists() else None, "classes": {}}
+        record = {
+            "run_dir": run_dir,
+            "label": label,
+            "history": pd.read_csv(history_path)
+                       if history_path.exists() else None,
+            "classes": {},
+        }
+
         for split in ("validation", "test"):
             metrics_path = run_dir / f"metrics_{split}.json"
             if not metrics_path.exists():
                 continue
+
             scores = json.loads(metrics_path.read_text(encoding="utf-8"))
-            rows.append({**{key: value for key, value in metadata.items() if key != "training"},
-                         "label": label, "split": split, **scores})
-            record["classes"][split] = pd.read_csv(run_dir / f"per_class_{split}.csv", dtype={"species": str})
+            rows.append({
+                **{key: value for key, value in metadata.items()
+                   if key != "training"},
+                "label": label, "split": split, **scores,
+            })
+            record["classes"][split] = pd.read_csv(
+                run_dir / f"per_class_{split}.csv",
+                dtype={"species": str},
+            )
             table = record["classes"][split].copy()
-            for key, value in (("label", label), ("seed", metadata["seed"]), ("stage", metadata["stage"]),
-                               ("variant", metadata["variant"]), ("parameter", metadata["parameter"]), ("split", split)):
-                table[key] = np.nan if key == "parameter" and value is None else value
+            for key, value in (
+                ("label", label), ("seed", metadata["seed"]),
+                ("stage", metadata["stage"]),
+                ("variant", metadata["variant"]),
+                ("parameter", metadata["parameter"]), ("split", split),
+            ):
+                table[key] = (
+                    np.nan if key == "parameter" and value is None else value
+                )
             class_tables.append(table)
             plot_per_class(run_dir, split, label)
+
         records.append(record)
-    overall = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["label", "split"])
+
+    overall = (
+        pd.DataFrame(rows) if rows
+        else pd.DataFrame(columns=["label", "split"])
+    )
     overall.to_csv(reports_dir / "comparison.csv", index=False)
     if class_tables:
-        pd.concat(class_tables, ignore_index=True).to_csv(reports_dir / "per_class_comparison.csv", index=False)
+        pd.concat(class_tables, ignore_index=True).to_csv(
+            reports_dir / "per_class_comparison.csv", index=False
+        )
+
     summary = pd.DataFrame()
     if rows:
-        groups = ["campaign", "model_key", "augmentation", "variant", "parameter", "stage", "split"]
-        metrics = [column for column in overall.select_dtypes(include="number") if column not in {"seed", "parameter"}]
+        groups = [
+            "campaign", "model_key", "augmentation",
+            "variant", "parameter", "stage", "split",
+        ]
+        metrics = [
+            column for column in overall.select_dtypes(include="number")
+            if column not in {"seed", "parameter"}
+        ]
         grouped = overall.groupby(groups, dropna=False)
         summary = grouped[metrics].agg(["mean", "std"])
-        summary.columns = [f"{metric}_{stat}" for metric, stat in summary.columns]
+        summary.columns = [
+            f"{metric}_{stat}" for metric, stat in summary.columns
+        ]
         summary["n_seeds"] = grouped.seed.nunique()
         summary = summary.reset_index()
+
         for split in overall.split.unique():
             table = overall[overall.split == split]
             fig, axes = plt.subplots(1, 2, figsize=(14, 5))
             axes[0].bar(range(len(table)), table.top1_accuracy)
-            axes[0].set_xticks(range(len(table)), table.label, rotation=90, fontsize=7)
-            axes[0].set(title=f"Species accuracy - {split}", ylim=(0, 1))
-            for variant in ("ce", "soft", "hxe"):
-                selected = table[table.variant == variant]
-                if not selected.empty:
-                    axes[1].scatter(selected.top1_error, selected.mistake_severity, label=variant)
-            axes[1].set(xlabel="Top-1 error", ylabel="Mistake severity", title="Hierarchical trade-off")
-            axes[1].legend()
-            axes[1].grid(alpha=.2)
+            axes[0].set_xticks(
+                range(len(table)), table.label, rotation=90, fontsize=7
+            )
+            axes[0].set(
+                title=f"Species accuracy · {split}", ylim=(0, 1)
+            )
+            draw_tradeoff(axes[1], table, "mistake_severity")
+            axes[1].set_title("Hierarchical trade-off")
             save_figure(fig, reports_dir / f"comparison_{split}.png")
-            for metric in ("avg_hierarchical_distance@1", "avg_hierarchical_distance@5"):
-                fig, ax = plt.subplots(figsize=(8, 5))
-                for variant in ("ce", "soft", "hxe"):
-                    selected = table[table.variant == variant]
-                    if not selected.empty:
-                        ax.scatter(selected.top1_error, selected[metric], label=variant)
-                ax.set(xlabel="Top-1 error", ylabel=metric, title=f"Hierarchical distance - {split}")
-                ax.legend()
-                ax.grid(alpha=.2)
-                save_figure(fig, reports_dir / f"{metric.replace('@', '_')}_{split}.png")
+
+            for k in (1, 5, 20):
+                metric = f"avg_hierarchical_distance@{k}"
+                if metric not in table or table[metric].notna().sum() == 0:
+                    print(
+                        f"Skipping {metric} · {split}: no saved values. "
+                        "Re-evaluate to add this metric."
+                    )
+                    continue
+
+                fig, ax = plt.subplots(figsize=(9, 5.5))
+                draw_tradeoff(ax, table, metric)
+                ax.set_title(f"Hierarchical distance @{k} · {split}")
+                save_figure(
+                    fig,
+                    reports_dir / f"avg_hierarchical_distance_{k}_{split}.png",
+                )
+
     summary.to_csv(reports_dir / "seed_summary.csv", index=False)
     plot_dataset_counts(reports_dir / "dataset_counts.csv", reports_dir)
     build_html(records, overall, summary, reports_dir / "report.html")
-    print("Rapport :", reports_dir / "report.html")
+    print("Report:", reports_dir / "report.html")
     return overall
 
 
