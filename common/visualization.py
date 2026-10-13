@@ -29,7 +29,7 @@ def run_label(metadata):
 
 
 def plot_learning_curves(run_dir, label):
-    """Plot loss, accuracy and top-5 train/validation."""
+    """Plot loss, accuracy and top-5 train/validation"""
     history_path = run_dir / "history.csv"
     if not history_path.exists():
         return
@@ -130,15 +130,16 @@ def plot_augmentation_preview(image_path, transforms, settings, output_path):
     save_figure(fig, output_path)
 
 def draw_tradeoff(ax, table, metric):
-    """Plot parameter sweeps with seed means and standard deviations."""
+    """Plot parameter sweeps with seed means and automatic label placement"""
+    from adjustText import adjust_text
+
     names = {"ce": "CE", "soft": "Soft Labels", "hxe": "HXE", "haf": "HAF"}
     colors = {
-        "ce": "#252525",
-        "soft": "#e28b20",
-        "hxe": "#007d79",
-        "haf": "#7756a8",
+        "ce": "#252525", "soft": "#e28b20",
+        "hxe": "#007d79", "haf": "#7756a8",
     }
     styles = {"frozen": ":", "partial": "--", "deeper": "-.", "full": "--"}
+
     groups = [
         key for key in ("model_key", "augmentation", "stage", "variant")
         if key in table
@@ -147,6 +148,7 @@ def draw_tradeoff(ax, table, metric):
         key for key in groups
         if key != "variant" and table[key].nunique() > 1
     ]
+    texts, target_x, target_y, avoid_x, avoid_y = [], [], [], [], []
 
     for _, selected in table.groupby(groups, dropna=False):
         selected = selected.dropna(subset=["top1_error", metric])
@@ -162,8 +164,8 @@ def draw_tradeoff(ax, table, metric):
             ["top1_error", metric]
         ].agg(["mean", "std"]).sort_index()
 
-        x = points[("top1_error", "mean")]
-        y = points[(metric, "mean")]
+        x = points[("top1_error", "mean")].to_numpy(dtype=float)
+        y = points[(metric, "mean")].to_numpy(dtype=float)
         multiple_seeds = (
             selected.groupby("parameter", dropna=False).seed.nunique().max() > 1
         )
@@ -185,12 +187,16 @@ def draw_tradeoff(ax, table, metric):
             label=label,
         )
 
-        # Alternate label positions to improve readability.
-        offsets = (
-            [(5, -16), (5, 9)] if variant == "hxe"
-            else [(5, 9), (5, -16)]
-        )
-        for index, (parameter, xx, yy) in enumerate(zip(points.index, x, y)):
+        avoid_x.extend(x)
+        avoid_y.extend(y)
+
+        # Sample connecting lines so labels also avoid the curves.
+        if variant in ("soft", "hxe"):
+            for index in range(len(x) - 1):
+                avoid_x.extend(np.linspace(x[index], x[index + 1], 25))
+                avoid_y.extend(np.linspace(y[index], y[index + 1], 25))
+
+        for parameter, xx, yy in zip(points.index, x, y):
             if variant in ("soft", "hxe") and pd.notna(parameter):
                 text = f"{'β' if variant == 'soft' else 'α'}={parameter:g}"
             elif variant == "ce":
@@ -198,16 +204,12 @@ def draw_tradeoff(ax, table, metric):
             else:
                 continue
 
-            ax.annotate(
-                text, (xx, yy),
-                xytext=offsets[index % 2],
-                textcoords="offset points",
-                fontsize=9,
-                color=color,
-                bbox=dict(
-                    facecolor="white", edgecolor="none", alpha=.8, pad=1
-                ),
-            )
+            texts.append(ax.text(
+                xx, yy, text,
+                fontsize=9, color=color, ha="center", va="center",
+            ))
+            target_x.append(xx)
+            target_y.append(yy)
 
     ylabel = (
         "Mistake severity" if metric == "mistake_severity"
@@ -217,7 +219,24 @@ def draw_tradeoff(ax, table, metric):
     ax.xaxis.set_major_formatter(PercentFormatter(xmax=1))
     ax.margins(x=.15, y=.18)
     ax.grid(alpha=.2)
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=9, loc="upper left", bbox_to_anchor=(1.01, 1))
+
+    # Adjust labels after setting the final axes limits.
+    if texts:
+        adjust_text(
+            texts,
+            x=avoid_x, y=avoid_y,
+            target_x=target_x, target_y=target_y,
+            ax=ax,
+            expand=(1.15, 1.3),
+            force_text=(.25, .4),
+            force_static=(.2, .3),
+            iter_lim=400,
+            min_arrow_len=5,
+            arrowprops=dict(
+                arrowstyle="-", color="#9aa4ad", lw=.6
+            ),
+        )
 
 
 def build_html(records, overall, seed_summary, output_path):
@@ -252,16 +271,12 @@ def build_html(records, overall, seed_summary, output_path):
     parts = [
         f"<h1>{escape(campaign)}</h1>",
         "<p>Offline report generated from saved results. "
-        "PNGs are embedded in this file.</p>",
         '<nav><a href="#comparison">Comparisons</a> · '
         '<a href="#runs">Runs and species</a> · '
         '<a href="#metrics">Overall metrics</a> · '
-        '<a href="#seeds">Across seeds</a></nav>',
-        '<h2 id="comparison">Method comparison</h2>',
-        "<p>Lower values on both axes are preferable. Points show seed means; "
-        "error bars show standard deviations when multiple seeds are available. "
-        "Lines follow the hyperparameter order. Different stages and training "
-        "settings have separate curves.</p>",
+        '<a href="#seeds">Across seeds</a> · '
+        '<a href="#dataset">Dataset distribution</a></nav>',
+        "<p>Lower values on both axes are preferable.</p>",
     ]
 
     if not overall.empty:
@@ -279,7 +294,7 @@ def build_html(records, overall, seed_summary, output_path):
             parts.append(f"<h3>{escape(str(split).capitalize())}</h3>")
             parts.append(picture(
                 reports_dir / f"comparison_{split}.png",
-                "Species accuracy and mistake severity",
+                "Top-1 error versus mistake severity",
             ))
             for k in (1, 5, 20):
                 parts.append(picture(
@@ -348,7 +363,7 @@ def build_html(records, overall, seed_summary, output_path):
         table(seed_summary),
         "<p>Single-seed standard deviations appear as “—”. "
         "Complete CSV files remain in runs/ and reports/.</p>",
-        "<h2>Dataset distribution</h2>",
+        "<h2 id="dataset">Dataset distribution</h2>",
     ]
 
     for path in sorted(reports_dir.glob("dataset_distribution*.png")):
@@ -480,16 +495,9 @@ def build_reports(campaign_dir):
 
         for split in overall.split.unique():
             table = overall[overall.split == split]
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-            axes[0].bar(range(len(table)), table.top1_accuracy)
-            axes[0].set_xticks(
-                range(len(table)), table.label, rotation=90, fontsize=7
-            )
-            axes[0].set(
-                title=f"Species accuracy · {split}", ylim=(0, 1)
-            )
-            draw_tradeoff(axes[1], table, "mistake_severity")
-            axes[1].set_title("Hierarchical trade-off")
+            fig, ax = plt.subplots(figsize=(9, 5.5))
+            draw_tradeoff(ax, table, "mistake_severity")
+            ax.set_title(f"Hierarchical trade-off · {split}")
             save_figure(fig, reports_dir / f"comparison_{split}.png")
 
             for k in (1, 5, 20):
