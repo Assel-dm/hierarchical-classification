@@ -18,6 +18,11 @@ from methods.mbm import build_loss, soft_label_statistics
 
 
 def main():
+    # 0. Plot saved results without loading the dataset or any checkpoint
+    if cfg.MAKE_PLOTS and not (cfg.RUN_TRAINING or cfg.EVALUATE_VALIDATION or cfg.EVALUATE_TEST):
+        campaign_dir = Path(cfg.OUTPUT_ROOT).expanduser() / cfg.EXPERIMENT_NAME
+        build_reports(campaign_dir)
+        return
     # 1. Config check
     stage_order = ["frozen", "partial", "deeper"]
     if cfg.STAGES != ["full"] and (not cfg.STAGES or cfg.stages != [stage for stage in stage_order if stage in cfg.STAGES]):
