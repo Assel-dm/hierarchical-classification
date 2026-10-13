@@ -363,7 +363,7 @@ def build_html(records, overall, seed_summary, output_path):
         table(seed_summary),
         "<p>Single-seed standard deviations appear as “—”. "
         "Complete CSV files remain in runs/ and reports/.</p>",
-        "<h2 id="dataset">Dataset distribution</h2>",
+        '<h2 id="dataset">Dataset distribution</h2>',
     ]
 
     for path in sorted(reports_dir.glob("dataset_distribution*.png")):
