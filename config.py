@@ -6,7 +6,7 @@ DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h"
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
 INAT_HIERARCHY_FILE = DATASET_ROOT / "metadata" / "inaturalist19_isa.txt" #Used hierarchy
 INAT_CATEGORIES_FILE = Path.home() / "datasets" / "inaturalist-19" / "categories.json"
-EXPERIMENT_NAME = "inat19h_convnext_full_v1"
+EXPERIMENT_NAME = "inat19h_convnext_hag_v1"
 
 
 # One backbone and one augmentation by campaign
@@ -20,7 +20,7 @@ AUGMENTATION = "autoaugment_original"  # standard or autoaugment_original
 
 METHOD = "mbm"
 HXE_NORMALIZE_WEIGHTS = True
-EXPERIMENTS = [
+EXPERIMENTS_MBM = [
     ("ce", None),          # Baseline
     ("soft", 5),           # Soft Labels : beta
     ("soft", 10),
@@ -33,12 +33,32 @@ EXPERIMENTS = [
     ("hxe", 0.5),  
     ("hxe", 0.7),  
 ]
+
+EXPERIMENTS_HAF = [
+    ("ce", None),          # Baseline 
+    ("haf", None),         # CE fine + SHC + margin + GC
+    # ("haf_ce", None),    # CE only
+    # ("haf_shc", None),   # CE + SHC
+    # ("haf_margin", None),# CE + margin
+    # ("haf_gc", None),    # CE + GC
+    # ("haf_shc_gc", None),# CE + SHC + GC
+    # ("haf_shc_margin", None),  # CE + SHC + margin
+]
+
+EXPERIMENTS = EXPERIMENTS_HAF
+
+HAF_MARGIN = 3.0           # Authors' value; above ln(2), so the hinge stays active
+HAF_MARGIN_MODE = "official"  # official: two KL hinges; paper: one JSD hinge
+HAF_MAX_PAIRS = 256        # Maximum valid pairs per batch and coarse rank
+HAF_MARGIN_RANKS = None    # iNat: phylum to genus; Small-Collemboles: all coarse ranks
+HAF_MONITOR = "val_loss"     # Early stopping: val_ce or val_loss
+
 SEEDS = [42]               # multiseed : [42, 43, 44, 45, 46]
 STAGES = ["full"]        # ["frozen", "partial", "deeper"]
 
 # Training parameters
 DEVICE = "auto"            
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 NUM_WORKERS = 2            
 STAGE_SETTINGS = {
     "full": {"learning_rate": 1e-5, "max_epochs": 40, "patience": 8},
