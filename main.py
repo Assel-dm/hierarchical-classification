@@ -15,7 +15,14 @@ from common.data import build_loaders
 from datasets.small_collemboles import load_small_collemboles
 from datasets.inaturalist19 import load_inaturalist19, show_summary
 from methods.mbm import build_loss, soft_label_statistics
+from methods.haf import HAFClassifier, build_loss as build_haf_loss
 
+
+def build_criterion(variant, parameter, data, haf_options):
+    """Keep the CE baseline and select the requested method."""
+    if cfg.METHOD == "mbm" or variant == "ce":
+        return build_mbm_loss(variant, parameter, data, getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False))
+    return build_haf_loss(variant, parameter, data, **haf_options)
 
 def main():
     # 0. Plot saved results without loading the dataset or any checkpoint
@@ -55,17 +62,27 @@ def main():
     else:
         raise NotImplementedError(f"Dataset to be added main.py : {cfg.DATASET}")
 
-    if cfg.METHOD != "mbm":
+    if cfg.METHOD not in {"mbm", "haf"} :
         raise NotImplementedError(f"Method to be added main.py : {cfg.METHOD}")
 
+    haf_options = {}
+    haf_monitor = getattr(cfg, "HAF_MONITOR", "val_loss")
+    if cfg.METHOD == "haf":
+        haf_options = {
+            "margin": getattr(cfg, "HAF_MARGIN", 3.0),
+            "max_pairs": getattr(cfg, "HAF_MAX_PAIRS", 256),
+            "margin_ranks": getattr(cfg, "HAF_MARGIN_RANKS", None),
+            "margin_mode": getattr(cfg, "HAF_MARGIN_MODE", "official"),
+        }
+        if haf_monitor not in {"val_loss", "val_ce"}:
+            raise ValueError("HAF_MONITOR must be val_ce or val_loss")
+
+
     for variant, parameter in cfg.EXPERIMENTS:
-        # Check choices before training
-        build_loss(
-            variant,
-            parameter,
-            data,
-            getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False),
-        )
+        criterion = build_criterion(variant, parameter, data, haf_options)
+        if getattr(criterion, "requires_hierarchy", False):
+            print(f"{variant} : ranks={criterion.ranks} | margin ranks={criterion.margin_ranks}")
+        del criterion
 
     for stage in cfg.STAGES:
         spec = cfg.STAGE_SETTINGS[stage]
@@ -91,9 +108,11 @@ def main():
         "torch": str(torch.__version__).split("+")[0], "torchvision": torchvision.__version__.split("+")[0],
         "timm": timm.__version__,
     }
-    if data["name"] == "inaturalist19_h":
+    if cfg.METHOD =="haf" :
+        campaign_config.update(loss_version="haf_v1", haf={**haf_options, "monitor": haf_monitor})
+    elif data["name"] == "inaturalist19_h":
         campaign_config["loss_version"] = "mbm_seven_ranks_v1"
-    if getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False):
+    if cfg.METHOD == "mbm" and getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False):
         campaign_config["hxe_normalize_weights"] = True
     
     check_configuration(campaign_dir / "campaign.json", campaign_config)
@@ -109,7 +128,7 @@ def main():
     soft_settings = [
         soft_label_statistics(data["normalized_distances"], parameter)
         for variant, parameter in cfg.EXPERIMENTS
-        if variant == "soft"
+        if cfg.METHOD =="mbm" and variant == "soft"
     ]
     if soft_settings:
         pd.DataFrame(soft_settings).to_csv(
@@ -141,14 +160,22 @@ def main():
                 metadata = {"campaign": cfg.EXPERIMENT_NAME, "model_key": cfg.MODEL_KEY,
                             "augmentation": cfg.AUGMENTATION, "variant": variant, "parameter": parameter,
                             "seed": seed, "stage": stage, "training": spec}
+                monitor = haf_monitor if cfg.METHOD == "haf" and variant != "ce" else "val_loss"
+                if cfg.METHOD == "haf":
+                    metadata.update(method="haf", monitor=monitor)
                 check_configuration(run_dir / "metadata.json", metadata)
                 print(f"\n{variant_name} | seed {seed} | {stage}")
                 seed_everything(seed)
                 new_initial = (stage in ("frozen", "full") and not (run_dir / "last.pt").exists() and not (run_dir / "complete.json").exists())
                 pretrained=cfg.PRETRAINED and cfg.RUN_TRAINING and new_initial
-                model = SpeciesClassifier(settings, len(data["species"]),pretrained=pretrained)
+                criterion = build_criterion(variant, parameter, data, haf_options).to(device)
+                if getattr(criterion, "requires_hierarchy", False) :
+                    model = HAFClassifier(settings, data, pretrained=pretrained)
+                else :
+                    model = SpeciesClassifier(settings, len(data["species"]),pretrained=pretrained)
                 model.set_stage(stage)
                 model.to(device)
+                loaders = build_loaders(data, settings, cfg.BATCH_SIZE, cfg.NUM_WORKERS, seed, cfg.AUGMENTATION, device)
                 
                 # report the number of trainable parameters
                 trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -175,8 +202,7 @@ def main():
 
                 if cfg.RUN_TRAINING:
                     optimizer = make_optimizer(model, spec["learning_rate"])
-                    train_model(model, criterion, optimizer, loaders, device, run_dir,
-                                spec["max_epochs"], spec["patience"], metadata, cfg.RESUME_TRAINING)
+                    train_model(model, criterion, optimizer, loaders, device, run_dir, spec["max_epochs"], spec["patience"], metadata, cfg.RESUME_TRAINING)
                     del optimizer
                 else:
                     saved = load_checkpoint(run_dir / "best.pt")
@@ -187,8 +213,7 @@ def main():
                 # 5. Evaluation on validation or test 
                 for split, enabled in (("validation", cfg.EVALUATE_VALIDATION), ("test", cfg.EVALUATE_TEST)):
                     if enabled:
-                        scores = evaluate_model(model, loaders[split], device, data, run_dir,
-                                                split, cfg.SAVE_PROBABILITIES)
+                        scores = evaluate_model(model, loaders[split], device, data, run_dir, split, cfg.SAVE_PROBABILITIES)
                         print(f"{split} : accuracy={scores['top1_accuracy']:.3f}, "
                               f"F1 macro={scores['f1_macro']:.3f}, severity={scores['mistake_severity']:.3f}")
                 del model, criterion, loaders
