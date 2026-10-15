@@ -20,7 +20,7 @@ def save_figure(fig, path):
 
 def run_label(metadata):
     """Build readable label for figures"""
-    names = {"ce": "CE", "soft": "Soft Labels", "hxe": "HXE", "haf": "HAF", "haf_ce": "HAF CE", "haf_shc": "HAF CE + SHC", "haf_shc_margin": "HAF CE + SHC + margin", "haf_sch_gc": "HAF CE + SHC + GC"}
+    names = {"ce": "CE", "soft": "Soft Labels", "hxe": "HXE", "haf": "HAF", "haf_ce": "HAF CE", "haf_shc": "HAF CE + SHC", "haf_shc_margin": "HAF CE + SHC + margin", "haf_shc_gc": "HAF CE + SHC + GC"}
     label = names.get(metadata["variant"], metadata["variant"])
     if metadata["parameter"] is not None:
         symbol = "β" if metadata["variant"] == "soft" else "α"
@@ -50,7 +50,7 @@ def plot_per_class(run_dir, split, label):
     table = pd.read_csv(run_dir / f"per_class_{split}.csv", dtype={"species": str})
     worst = table.sort_values("f1").head(25)
     fig, ax = plt.subplots(figsize=(9, max(4, len(worst) * .26)))
-    ax.barh(worst.species if "species_name" in worst else worst.species, worst.f1)
+    ax.barh(worst.species if "species_name" in worst else worst["species"], worst["f1"])
     ax.invert_yaxis()
     ax.set(xlabel="F1", xlim=(0, 1), title=f"{label} - {split} - lowest F1")
     ax.grid(axis="x", alpha=.2)
