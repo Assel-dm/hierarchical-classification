@@ -65,11 +65,11 @@ class SpeciesClassifier(nn.Module):
         self.open_modules = []
         self.set_stage("frozen")
     def forward_features(self,images):
-	"Return features shared by the classification head"
-	features = self.backbone(images)
-	if features.ndim != 2 or features.shape[-1] != self.head[1].in_features:
-		raise ValueError(f"Unexpected pooled features: {tuple(features.shape)}")
-	return features
+		"Return features shared by the classification head"
+		features = self.backbone(images)
+		if features.ndim != 2 or features.shape[-1] != self.head[1].in_features:
+			raise ValueError(f"Unexpected pooled features: {tuple(features.shape)}")
+		return features
     def forward(self, images):
         """Returns logits of species"""
         return self.head(self.forward_features(images))
