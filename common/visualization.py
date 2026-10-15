@@ -20,8 +20,8 @@ def save_figure(fig, path):
 
 def run_label(metadata):
     """Build readable label for figures"""
-    names = {"ce": "CE", "soft": "Soft Labels", "hxe": "HXE"}
-    label = names[metadata["variant"]]
+    names = {"ce": "CE", "soft": "Soft Labels", "hxe": "HXE", "haf": "HAF", "haf_ce": "HAF CE", "haf_shc": "HAF CE + SHC", "haf_shc_margin": "HAF CE + SHC + margin", "haf_sch_gc": "HAF CE + SHC + GC"}
+    label = names.get(metadata["variant"], metadata["variant"])
     if metadata["parameter"] is not None:
         symbol = "β" if metadata["variant"] == "soft" else "α"
         label += f" {symbol}={metadata['parameter']:g}"

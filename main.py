@@ -32,7 +32,7 @@ def main():
         return
     # 1. Config check
     stage_order = ["frozen", "partial", "deeper"]
-    if cfg.STAGES != ["full"] and (not cfg.STAGES or cfg.stages != [stage for stage in stage_order if stage in cfg.STAGES]):
+    if cfg.STAGES != ["full"] and (not cfg.STAGES or cfg.STAGES != [stage for stage in stage_order if stage in cfg.STAGES]):
         raise ValueError("STAGES must be ['full'] or in the order frozen, partial, deeper")
     if not cfg.SEEDS or any(type(seed) is not int or not 0 <= seed < 2**32 for seed in cfg.SEEDS):
         raise ValueError("SEEDS must contains integer in [0, 2**32)")
@@ -182,10 +182,6 @@ def main():
                 total = sum(p.numel() for p in model.parameters())
                 print (f"Trainable parameters: {trainable:,}/{total:,}"
                        f"({100* trainable / total:.1f}%)")
-                
-                criterion = build_loss(variant, parameter, data, getattr(cfg,"HXE_NORMALIZE_WEIGHTS", False),).to(device)
-                loaders = build_loaders(data, settings, cfg.BATCH_SIZE, cfg.NUM_WORKERS,
-                                        seed, cfg.AUGMENTATION, device)
 
                 # The unfreeze start back from the best weights of the previous phase
                 if cfg.RUN_TRAINING and stage in("partial", "deeper") and not (run_dir / "last.pt").exists() and not (run_dir / "complete.json").exists():
@@ -202,7 +198,7 @@ def main():
 
                 if cfg.RUN_TRAINING:
                     optimizer = make_optimizer(model, spec["learning_rate"])
-                    train_model(model, criterion, optimizer, loaders, device, run_dir, spec["max_epochs"], spec["patience"], metadata, cfg.RESUME_TRAINING)
+                    train_model(model, criterion, optimizer, loaders, device, run_dir, spec["max_epochs"], spec["patience"], metadata, cfg.RESUME_TRAINING, monitor=monitor)
                     del optimizer
                 else:
                     saved = load_checkpoint(run_dir / "best.pt")

@@ -64,13 +64,15 @@ class SpeciesClassifier(nn.Module):
         self.head = nn.Sequential(nn.Dropout(settings["head_dropout"]), nn.Linear(self.backbone.num_features, num_leaves))
         self.open_modules = []
         self.set_stage("frozen")
-
+    def forward_features(self,images):
+	"Return features shared by the classification head"
+	features = self.backbone(images)
+	if features.ndim != 2 or features.shape[-1] != self.head[1].in_features:
+		raise ValueError(f"Unexpected pooled features: {tuple(features.shape)}")
+	return features
     def forward(self, images):
         """Returns logits of species"""
-        features = self.backbone(images)
-        if features.ndim != 2 or features.shape[-1] != self.head[1].in_features:
-            raise ValueError(f"Unexpected pooled features: {tuple(features.shape)}")
-        return self.head(features)
+        return self.head(self.forward_features(images))
 
     def set_stage(self, stage):
         """Unfreeze choosen modules """ 
