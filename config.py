@@ -6,7 +6,7 @@ DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h"
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
 INAT_HIERARCHY_FILE = DATASET_ROOT / "metadata" / "inaturalist19_isa.txt" #Used hierarchy
 INAT_CATEGORIES_FILE = Path.home() / "datasets" / "inaturalist-19" / "categories.json"
-EXPERIMENT_NAME = "inat19h_convnext_hag_v1"
+EXPERIMENT_NAME = "inat19h_convnext_haf_v1"
 
 
 # One backbone and one augmentation by campaign
@@ -18,7 +18,7 @@ FREEZE_BATCH_NORM = False
 AUGMENTATION = "autoaugment_original"  # standard or autoaugment_original
 
 
-METHOD = "mbm"
+METHOD = "haf"
 HXE_NORMALIZE_WEIGHTS = True
 EXPERIMENTS_MBM = [
     ("ce", None),          # Baseline

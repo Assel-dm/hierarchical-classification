@@ -21,7 +21,7 @@ from methods.haf import HAFClassifier, build_loss as build_haf_loss
 def build_criterion(variant, parameter, data, haf_options):
     """Keep the CE baseline and select the requested method."""
     if cfg.METHOD == "mbm" or variant == "ce":
-        return build_mbm_loss(variant, parameter, data, getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False))
+        return build_loss(variant, parameter, data, getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False))
     return build_haf_loss(variant, parameter, data, **haf_options)
 
 def main():
