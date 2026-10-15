@@ -53,107 +53,231 @@ def check_configuration(path, configuration):
 
 
 def epoch_pass(model, loader, criterion, device, optimizer=None):
-    """For one epoch compute loss, top-1 et top-5."""
+    """Compute loss, top-1 and top-5 for one epoch."""
     training = optimizer is not None
     model.train(training)
     criterion.train(training)
 
     total_loss = correct = top5 = count = 0
     component_totals = {}
+
     with torch.enable_grad() if training else torch.inference_mode():
         for images, targets in loader:
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
+
             if training:
                 optimizer.zero_grad(set_to_none=True)
+
             if getattr(criterion, "requires_hierarchy", False):
-		outputs = model(images, return_hierarchy=True)
-		logits = outputs["logits"]
-            else :
-		output = logits = model(images)
-	    loss = criterion(outputs, targets)
+                outputs = model(images, return_hierarchy=True)
+                logits = outputs["logits"]
+            else:
+                outputs = logits = model(images)
+
+            loss = criterion(outputs, targets)
+
             if not torch.isfinite(loss):
-                raise FloatingPointError("Unfinished loss; the interrupted epoch is not saved")
+                raise FloatingPointError(
+                    "Non-finite loss; the interrupted epoch is not saved"
+                )
+
             if training:
                 loss.backward()
                 optimizer.step()
+
             n = len(targets)
             total_loss += loss.item() * n
-	    for key, value in getattr(criterion, "last_components", {}).items():
-		component_totals.get(key, 0.0) + value.item() * n)
+
+            for key, value in getattr(criterion, "last_components", {}).items():
+                component_totals[key] = (
+                    component_totals.get(key, 0.0) + value.item() * n
+                )
 
             correct += (logits.argmax(1) == targets).sum().item()
-            top5 += logits.topk(min(5, logits.shape[1]), dim=1).indices.eq(targets[:, None]).any(1).sum().item()
+            top5 += (
+                logits.topk(min(5, logits.shape[1]), dim=1)
+                .indices.eq(targets[:, None])
+                .any(1)
+                .sum()
+                .item()
+            )
             count += n
+
     if count == 0:
-        raise ValueError("Void split ")
-    return {"loss": total_loss / count, "accuracy": correct / count, "top5_accuracy": top5 / count, **{key : value / count for key, value in component_totals.items()}}
+        raise ValueError("Empty split")
+
+    return {
+        "loss": total_loss / count,
+        "accuracy": correct / count,
+        "top5_accuracy": top5 / count,
+        **{key: value / count for key, value in component_totals.items()},
+    }
 
 
-def train_model(model, criterion, optimizer, loaders, device, run_dir,
-                max_epochs, patience, metadata, resume=True, monitor="val_loss"):
-    """Train the phase and save its best weights"""
+def train_model(
+    model, criterion, optimizer, loaders, device, run_dir,
+    max_epochs, patience, metadata, resume=True, monitor="val_loss",
+):
+    """Train the phase and save its best weights."""
     run_dir = Path(run_dir)
+
+    if monitor not in {"val_loss", "val_ce"}:
+        raise ValueError("Early stopping must monitor val_loss or val_ce")
+
+    if monitor == "val_ce" and not getattr(criterion, "requires_hierarchy", False):
+        raise ValueError("val_ce is available for HAF; use val_loss for MBM/CE")
+
     run_dir.mkdir(parents=True, exist_ok=True)
-    best_path, last_path = run_dir / "best.pt", run_dir / "last.pt"
+    best_path = run_dir / "best.pt"
+    last_path = run_dir / "last.pt"
+
     if not resume and (best_path.exists() or last_path.exists()):
-        raise FileExistsError(f"Results already present in {run_dir}. Choose a new EXPERIMENT_NAME.")
+        raise FileExistsError(
+            f"Results already present in {run_dir}. "
+            "Choose a new EXPERIMENT_NAME."
+        )
+
     if (run_dir / "complete.json").exists():
-        model.load_state_dict(load_checkpoint(best_path)["model_state"])
+        checkpoint = load_checkpoint(best_path)
+
+        if checkpoint["metadata"] != metadata:
+            raise ValueError(
+                "The checkpoint does not match the current configuration"
+            )
+        if checkpoint.get("monitor", "val_loss") != monitor:
+            raise ValueError(
+                "The checkpoint uses a different early stopping metric"
+            )
+
+        model.load_state_dict(checkpoint["model_state"])
         print("Phase already finished :", run_dir)
         return pd.read_csv(run_dir / "history.csv")
 
     start_epoch, stale, best_loss, history = 0, 0, float("inf"), []
+
     if resume and last_path.exists():
         checkpoint = load_checkpoint(last_path)
+
         if checkpoint["metadata"] != metadata:
-            raise ValueError("The checkpoint does not match the current configuration")
+            raise ValueError(
+                "The checkpoint does not match the current configuration"
+            )
+        if checkpoint.get("monitor", "val_loss") != monitor:
+            raise ValueError(
+                "The checkpoint uses a different early stopping metric"
+            )
+
         model.load_state_dict(checkpoint["model_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
+
         start_epoch = checkpoint["epoch"] + 1
-        stale, best_loss, history = checkpoint["stale"], checkpoint["best_loss"], checkpoint["history"]
+        stale = checkpoint["stale"]
+        best_loss = checkpoint["best_loss"]
+        history = checkpoint["history"]
+
         rng = checkpoint["rng"]
         random.setstate(rng["python"])
         np.random.set_state(rng["numpy"])
         torch.set_rng_state(rng["torch"])
+
         if rng["cuda"] is not None and device.type == "cuda":
             torch.cuda.set_rng_state_all(rng["cuda"])
+
         for split in ("train", "validation"):
             loaders[split].generator.set_state(rng[split])
+
         print(f"Restart at epoch {start_epoch + 1} : {run_dir.name}")
 
     for epoch in range(start_epoch, max_epochs):
         if stale >= patience:
             break
-        train = epoch_pass(model, loaders["train"], criterion, device, optimizer)
-        validation = epoch_pass(model, loaders["validation"], criterion, device)
-        row = {"epoch": epoch + 1, **train, **{f"val_{key}": value for key, value in validation.items()}}
+
+        train = epoch_pass(
+            model, loaders["train"], criterion, device, optimizer
+        )
+        validation = epoch_pass(
+            model, loaders["validation"], criterion, device
+        )
+
+        row = {
+            "epoch": epoch + 1,
+            **train,
+            **{f"val_{key}": value for key, value in validation.items()},
+        }
         history.append(row)
-        if row["val_loss"] < best_loss:
-            best_loss, stale = row["val_loss"], 0
-            save_checkpoint(best_path, {"model_state": model.state_dict(), "epoch": epoch,
-                                        "val_loss": best_loss, "metadata": metadata, "monitor": monitor, "monitor_value":bet_loss})
+
+        if row[monitor] < best_loss:
+            best_loss, stale = row[monitor], 0
+
+            save_checkpoint(best_path, {
+                "model_state": model.state_dict(),
+                "epoch": epoch,
+                "val_loss": row["val_loss"],
+                "metadata": metadata,
+                "monitor": monitor,
+                "monitor_value": best_loss,
+            })
         else:
             stale += 1
 
-        rng = {"python": random.getstate(), "numpy": np.random.get_state(),
-               "torch": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-               "train": loaders["train"].generator.get_state(),
-               "validation": loaders["validation"].generator.get_state()}
-        save_checkpoint(last_path, {"model_state": model.state_dict(), "optimizer_state": optimizer.state_dict(),
-                                    "epoch": epoch, "best_loss": best_loss, "stale": stale,
-                                    "history": history, "rng": rng, "metadata": metadata, "monitor": monitor})
+        rng = {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+            "cuda": (
+                torch.cuda.get_rng_state_all()
+                if torch.cuda.is_available() else None
+            ),
+            "train": loaders["train"].generator.get_state(),
+            "validation": loaders["validation"].generator.get_state(),
+        }
+
+        save_checkpoint(last_path, {
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "epoch": epoch,
+            "best_loss": best_loss,
+            "stale": stale,
+            "history": history,
+            "rng": rng,
+            "metadata": metadata,
+            "monitor": monitor,
+        })
+
         pd.DataFrame(history).to_csv(run_dir / "history.csv", index=False)
-        print(f"  Epoch {epoch + 1}/{max_epochs} | loss {row['loss']:.4f} | "
-              f"val_loss {row['val_loss']:.4f} | val_accuracy {row['val_accuracy']:.4f}", flush=True)
-    if "ce" in train :
-	components = " | ".joint(f"{key}={train[key]:.4f}" for key in ("ce", "sch", "margin", "gc"))
-	print(f"HAF train : {components}" f"| monitor {monitor}={row[monitor]:.4f}", flush=True,)
+
+        print(
+            f"  Epoch {epoch + 1}/{max_epochs} | loss {row['loss']:.4f} | "
+            f"val_loss {row['val_loss']:.4f} | "
+            f"val_accuracy {row['val_accuracy']:.4f}",
+            flush=True,
+        )
+
+        if "ce" in train:
+            components = " | ".join(
+                f"{key}={train[key]:.4f}"
+                for key in ("ce", "shc", "margin", "gc")
+            )
+            print(
+                f"    HAF train : {components} | "
+                f"monitor {monitor}={row[monitor]:.4f}",
+                flush=True,
+            )
+
     if not best_path.exists():
         raise RuntimeError("No best checkpoint available")
+
     frame = pd.DataFrame(history)
     frame.to_csv(run_dir / "history.csv", index=False)
+
     best = load_checkpoint(best_path)
-    save_json(run_dir / "complete.json", {"epochs": len(history), "best_val_loss": best["val_loss"], "monitor": monitor, "best_monitor_value": best_loss})
-    model.load_state_dict(load_checkpoint(best_path)["model_state"])
+    save_json(run_dir / "complete.json", {
+        "epochs": len(history),
+        "best_val_loss": best["val_loss"],
+        "monitor": monitor,
+        "best_monitor_value": best_loss,
+    })
+
+    model.load_state_dict(best["model_state"])
     return frame
