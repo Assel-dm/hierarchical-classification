@@ -6,7 +6,7 @@ DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h"
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
 INAT_HIERARCHY_FILE = DATASET_ROOT / "metadata" / "inaturalist19_isa.txt" #Used hierarchy
 INAT_CATEGORIES_FILE = Path.home() / "datasets" / "inaturalist-19" / "categories.json"
-EXPERIMENT_NAME = "inat19h_convnext_haf_v1"
+EXPERIMENT_NAME = "inat19h_convnext_haf_v2"
 
 
 # One backbone and one augmentation by campaign
@@ -35,14 +35,14 @@ EXPERIMENTS_MBM = [
 ]
 
 EXPERIMENTS_HAF = [
-    ("ce", None),          # Baseline 
+    #("ce", None),          # Baseline 
     ("haf", None),         # CE fine + SHC + margin + GC
-    # ("haf_ce", None),    # CE only
-    # ("haf_shc", None),   # CE + SHC
-    # ("haf_margin", None),# CE + margin
-    # ("haf_gc", None),    # CE + GC
-    # ("haf_shc_gc", None),# CE + SHC + GC
-    # ("haf_shc_margin", None),  # CE + SHC + margin
+    ("haf_ce", None),    # CE only
+    ("haf_shc", None),   # CE + SHC
+    ("haf_margin", None),# CE + margin
+    ("haf_gc", None),    # CE + GC
+    ("haf_shc_gc", None),# CE + SHC + GC
+    ("haf_shc_margin", None),  # CE + SHC + margin
 ]
 
 EXPERIMENTS = EXPERIMENTS_HAF
@@ -61,7 +61,7 @@ DEVICE = "auto"
 BATCH_SIZE = 32
 NUM_WORKERS = 2            
 STAGE_SETTINGS = {
-    "full": {"learning_rate": 1e-5, "max_epochs": 40, "patience": 8},
+    "full": {"learning_rate": 1e-5, "max_epochs": 80, "patience": 8},
 }
 #    "frozen":  {"learning_rate": 3e-4, "max_epochs": 50, "patience": 8},
 #    "partial": {"learning_rate": 1e-5, "max_epochs": 30, "patience": 6},
