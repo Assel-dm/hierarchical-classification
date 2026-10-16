@@ -39,9 +39,7 @@ EXPERIMENTS_HAF = [
     ("haf", None),         # CE fine + SHC + margin + GC
     ("haf_ce", None),    # CE only
     ("haf_shc", None),   # CE + SHC
-    ("haf_margin", None),# CE + margin
-    ("haf_gc", None),    # CE + GC
-    ("haf_shc_gc", None),# CE + SHC + GC
+    ("haf_shc_gc", None), # CE + SHC + GC
     ("haf_shc_margin", None),  # CE + SHC + margin
 ]
 
