@@ -148,7 +148,7 @@ class HAFLoss(nn.Module):
                 pairs = dissimilar_pairs(labels, self.max_pairs, self.training)
                 n_pairs = len(pairs)
                 diagnostics[f"margin_pairs_{rank}"] = (n_pairs, 1)
-                diagnostics{f"margin_batch_fraction_{rank}"] = (int(n_pairs > 0), 1)
+                diagnostics[f"margin_batch_fraction_{rank}"] = (int(n_pairs > 0), 1)
                 rank_active = ce.new_zeros(())
                 rank_hinges = 0
                 if len(pairs):
