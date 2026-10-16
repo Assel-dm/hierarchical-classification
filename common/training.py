@@ -60,6 +60,7 @@ def epoch_pass(model, loader, criterion, device, optimizer=None):
 
     total_loss = correct = top5 = count = 0
     component_totals = {}
+    diagnostic_totals = {}
 
     with torch.enable_grad() if training else torch.inference_mode():
         for images, targets in loader:
@@ -93,6 +94,9 @@ def epoch_pass(model, loader, criterion, device, optimizer=None):
                 component_totals[key] = (
                     component_totals.get(key, 0.0) + value.item() * n
                 )
+            for key, (numerator, denominator) in getattr(criterion, "last_dignostics", {}).items() :
+                previous_sum, previous_count = diagnostic_total.get(key, (0., 0.))
+                diagnostic_totals[key] = (previous_sum + float(numerator), previous_count + float(denominator))
 
             correct += (logits.argmax(1) == targets).sum().item()
             top5 += (
@@ -112,6 +116,7 @@ def epoch_pass(model, loader, criterion, device, optimizer=None):
         "accuracy": correct / count,
         "top5_accuracy": top5 / count,
         **{key: value / count for key, value in component_totals.items()},
+        **{key: numerator / denominator if denominator else 0. for key, (numerator, denominator) in diagnostic_totals.items()},
     }
 
 
@@ -119,7 +124,7 @@ def train_model(
     model, criterion, optimizer, loaders, device, run_dir,
     max_epochs, patience, metadata, resume=True, monitor="val_loss",
 ):
-    """Train the phase and save its best weights."""
+    """Train the phase and save its best weights"""
     run_dir = Path(run_dir)
 
     if monitor not in {"val_loss", "val_ce"}:
@@ -255,15 +260,17 @@ def train_model(
         )
 
         if "ce" in train:
-            components = " | ".join(
-                f"{key}={train[key]:.4f}"
-                for key in ("ce", "shc", "margin", "gc")
-            )
-            print(
-                f"    HAF train : {components} | "
-                f"monitor {monitor}={row[monitor]:.4f}",
-                flush=True,
-            )
+            for split, values in (("train", train), ("validation", validation)):
+                components = " | ".join(f"{key}={values[key]:.4f}" for key in ("ce", "shc", "margin", "gc"))
+                print(f"HAF {split} : {components}", flush=True)
+            if "margin_active_ranks" in train:
+                print(
+                    "Margin ranks with pairs per batch: "
+                    f"train={train['margin_active_ranks']:.2f}, "
+                    f"validation={validation['margin_active_ranks']:.2f} | "
+                    f"monitor {monitor}={row[monitor]:.4f}",
+                    flush=True,
+                )
 
     if not best_path.exists():
         raise RuntimeError("No best checkpoint available")
