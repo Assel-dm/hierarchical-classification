@@ -134,6 +134,9 @@ class HAFLoss(nn.Module):
             raise ValueError("HAF logits do not match the taxonomy class counts")
         ce = F.cross_entropy(logits[-1], targets) #fine CE
         shc, margin, gc = (ce.new_zeros(()) for _ in range(3))
+        diagnostics = {}
+        active_ranks = pair_count = hinge_count = 0
+        active_hinges = ce.new_zeros(())
         probabilities = [values.softmax(dim=1) for values in logits]
         for level, rank in enumerate(self.ranks[:-1]):
             parent_map = getattr(self, f"parent_map_{level}")
@@ -143,9 +146,29 @@ class HAFLoss(nn.Module):
             if self.use_margin and rank in self.margin_ranks: #Margin
                 labels = getattr(self, f"leaf_labels_{level}")[targets]
                 pairs = dissimilar_pairs(labels, self.max_pairs, self.training)
+                n_pairs = len(pairs)
+                diagnostics[f"margin_pairs_{rank}"] = (n_pairs, 1)
+                diagnostics{f"margin_batch_fraction_{rank}"] = (int(n_pairs > 0), 1)
+                rank_active = ce.new_zeros(())
+                rank_hinges = 0
                 if len(pairs):
                     p, q = probabilities[level][pairs[:, 0]], probabilities[level][pairs[:, 1]]
                     margin = margin + margin_loss(p, q, self.margin, self.margin_mode)
+                    # Pairs inspection
+                    with torch.no_grad():
+                        if self.margin_mode == "official":
+                            kl_p, kl_q = kl_divergence(p.detach(), q.detach())
+                            rank_active = (kl_p < self.margin).sum() + (kl_q < self.margin).sum()
+                            rank_hinges = 2 * n_pairs
+                        else :
+                            jsd = jensen_shannon(p.detach(), q.detach())
+                            rank_active = (jsd < self.margin).sum()
+                            rank_hinges = n_pairs
+                    active_ranks += 1
+                    pair_count += n_pairs
+                    active_hinges = active_hinges + rank_active
+                    hinge_count += rank_hinges
+                diagnostics[f"margin_active_hinge_fraction_{rank}"] = (rank_active, rank_hinges)
             if self.use_gc: #Geometric consistency
                 children = F.normalize(weights[level + 1], dim=1)
                 parent_target = F.normalize(parent_map.T @ children, dim=1)
@@ -153,6 +176,14 @@ class HAFLoss(nn.Module):
                 gc = gc + (1 - similarity).clamp_min(0).mean()
         self.last_components = {"ce": ce.detach(), "shc": shc.detach(),
                                 "margin": margin.detach(), "gc": gc.detach()}
+        if self.use_margin:
+            diagnostics.update({
+                "margin_active_ranks": (active_ranks, 1),
+                "margin_pairs": (pair_count, 1),
+                "margin_active_hinge_fraction": (active_hinges, hinge_count),
+                "margin_lower_bound": (len(targets) * active_ranks * max(0., self.margin - math.log(2)), len(targets)),
+            })
+        self.last_diagnostics = diagnostics
         return ce + shc + margin + gc
 
 
