@@ -34,15 +34,70 @@ def plot_learning_curves(run_dir, label):
     if not history_path.exists():
         return
     history = pd.read_csv(history_path)
-    for metric, title in (("loss", "Loss"), ("accuracy", "Species accuracy"), ("top5_accuracy", "Top-5 accuracy")):
+    metrics = (("loss", "Loss"), ("accuracy", "Species accuracy"), ("top5_accuracy", "Top-5 accuracy"), ("ce", "HAF fine CE"), ("shc", "HAF soft hierarchical consistency"), ("margin", "HAF dissimilar-pair margin"), ("gc", "HAF geometric consistency (1 - cosine)"))
+    for metric, title in metrics:
         fig, ax = plt.subplots(figsize=(9, 4))
-        ax.plot(history.epoch, history[metric], label="Train")
-        ax.plot(history.epoch, history[f"val_{metric}"], "--", label="Validation")
+        if metric in history :
+            ax.plot(history.epoch, history[metric], label="Train")
+        if f"val_{metric}" in history :
+            ax.plot(history.epoch, history[f"val_{metric}"], "--", label="Validation")
         ax.set(title=label, xlabel="Epoch", ylabel=title)
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax.grid(alpha=.2)
         ax.legend()
         save_figure(fig, run_dir / "figures" / f"learning_{metric}.png")
+    
+    components = ("ce", "shc", "margin", "gc")
+    if any(key in history or f"val_{key}" in history for key in components):
+        fig, axes = plt.subplots(2, 2, figsize=(12, 7), sharex=True)
+        for ax, key in zip(axes.flat, components):
+            for column, style, name in ((key, "-", "Train"), (f"val_{key}", "--", "Validation")):
+                if column in history:
+                    ax.plot(history.epoch, history[column], style, label=name)
+            ax.set(title=key.upper(), xlabel="Epoch", ylabel="Loss component")
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.grid(alpha=.2)
+            if ax.lines:
+                ax.legend()
+        fig.suptitle(label)
+        fig.tight_layout()
+        save_figure(fig, run_dir / "figures" / "learning_components.png")
+
+    if "margin_active_ranks" in history:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        for ax, key, title in zip(axes, ("margin_active_ranks", "margin_pairs"), ("Ranks with dissimilar pairs per batch", "Selected pairs per batch (sum of ranks)")):
+            ax.plot(history.epoch, history[key], label="Train")
+            if f"val_{key}" in history:
+                ax.plot(history.epoch, history[f"val_{key}"], "--", label="Validation")
+            ax.set(title=title, xlabel="Epoch", ylabel="Mean per batch", ylim=(0, None))
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.grid(alpha=.2)
+            ax.legend()
+        fig.suptitle(label)
+        fig.tight_layout()
+        save_figure(fig, run_dir / "figures" / "learning_margin_diagnostics.png")
+
+
+def plot_distance_histogram(run_dir, split, label):
+    """Show both total-image and error-conditional distance distributions"""
+    path = run_dir / f"distance_histogram_{split}.csv"
+    if not path.exists():
+        return
+    table = pd.read_csv(path)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    for ax, selected, metric, title in (
+        (axes[0], table, "fraction_of_images", "All images (distance 0 = correct)"),
+        (axes[1], table[table.distance > 0], "fraction_of_errors", "Errors only"),
+    ):
+        ax.bar(selected.distance, selected[metric])
+        ax.set(title=title, xlabel="LCA height", ylabel="Fraction", ylim=(0, 1))
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+        ax.grid(axis="y", alpha=.2)
+    fig.suptitle(f"{label} - {split}")
+    fig.tight_layout()
+    save_figure(fig, run_dir / "figures" / f"distance_histogram_{split}.png")
+
 
 
 def plot_per_class(run_dir, split, label):
@@ -50,7 +105,10 @@ def plot_per_class(run_dir, split, label):
     table = pd.read_csv(run_dir / f"per_class_{split}.csv", dtype={"species": str})
     worst = table.sort_values("f1").head(25)
     fig, ax = plt.subplots(figsize=(9, max(4, len(worst) * .26)))
-    ax.barh(worst.species if "species_name" in worst else worst["species"], worst["f1"])
+    labels = worst["species"]
+    if "species_name" in worst :
+        labels = worst["species_name"].fillna(worst["species"]) + " (" + worst["species"] + ")"
+    ax.barh(labels, worst["f1"])
     ax.invert_yaxis()
     ax.set(xlabel="F1", xlim=(0, 1), title=f"{label} - {split} - lowest F1")
     ax.grid(axis="x", alpha=.2)
@@ -110,7 +168,7 @@ def plot_dataset_counts(path, output_dir):
 
 
 def plot_augmentation_preview(image_path, transforms, settings, output_path):
-    """Compare different augmention fonr an image"""
+    """Compare different augmention for an image"""
     from PIL import Image
     with Image.open(image_path) as image:
         original = image.convert("RGB")
@@ -270,7 +328,7 @@ def build_html(records, overall, seed_summary, output_path):
 
     parts = [
         f"<h1>{escape(campaign)}</h1>",
-        "<p>Offline report generated from saved results. "
+        "<p>Report generated from saved results. "
         '<nav><a href="#comparison">Comparisons</a> · '
         '<a href="#runs">Runs and species</a> · '
         '<a href="#metrics">Overall metrics</a> · '
@@ -313,6 +371,11 @@ def build_html(records, overall, seed_summary, output_path):
         "values without smoothing. Loss scales depend on the objective and its "
         "parameter; compare them within the same objective. Saved evaluation "
         "metrics refer to the selected checkpoint.</p>",
+        "<p>HAF total = fine CE + SHC + margin + GC. GC uses 1 - cosine; "
+        "the authors' -cosine convention differs by one constant per adjacent "
+        "rank link and has the same gradients. Margin depends on the number of "
+        "ranks with dissimilar pairs in each batch. Original validation ordering "
+        "and checkpoint selection are preserved.</p>",
     ]
 
     for record in records:
@@ -320,6 +383,18 @@ def build_html(records, overall, seed_summary, output_path):
         parts.append(
             f'<details><summary>{escape(record["label"])}</summary>'
         )
+        history = record["history"]
+        if "HAF" in record["label"] and history is not None:
+            columns = [prefix + key for prefix in ("", "val_") for key in ("ce", "shc", "margin", "gc")]
+            if not all(key in history for key in columns):
+                parts.append('<p class="note">This history does not contain all train/validation '
+                             'HAF components. Missing epoch values cannot be reconstructed from final weights.</p>')
+            else:
+                for prefix, title in (("", "Train"), ("val_", "Validation")):
+                    total = history[[prefix + key for key in ("ce", "shc", "margin", "gc")]].sum(axis=1)
+                    if not np.allclose(total, history[prefix + "loss"], atol=1e-5, rtol=1e-5):
+                        parts.append(f'<p class="note">{title} total loss does not match the sum of '
+                                     'the four saved components. Check the history and loss version.</p>')
 
         for metric, title in (
             ("loss", "Loss"),
@@ -329,6 +404,8 @@ def build_html(records, overall, seed_summary, output_path):
             ("shc", "HAF SHC"),
             ("margin", "HAF margin"),
             ("gc", "HAF GC"),
+            ("components", "HAF loss components"),
+            ("margin_diagnostics", "Dissimilar-pair availability"),
         ):
             parts.append(picture(
                 run_dir / "figures" / f"learning_{metric}.png", title
@@ -358,6 +435,10 @@ def build_html(records, overall, seed_summary, output_path):
 
     parts += [
         '<h2 id="metrics">Overall metrics</h2>',
+        "<p>Historical rank_accuracy metrics retain probability-sum decoding. "
+        "The explicit rank_accuracy_probability_sum columns are aliases; "
+        "rank_accuracy_top1_ancestor uses the ancestor of the top-1 species, "
+        "as in the paper's hierarchical evaluation.</p>",
         table(overall),
         '<h2 id="seeds">Mean and standard deviation across seeds</h2>',
         table(seed_summary),
@@ -462,6 +543,7 @@ def build_reports(campaign_dir):
                 )
             class_tables.append(table)
             plot_per_class(run_dir, split, label)
+            plot_distance_histogram(run_dir, split, label)
 
         records.append(record)
 
