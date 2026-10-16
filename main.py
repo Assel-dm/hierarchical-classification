@@ -109,7 +109,7 @@ def main():
         "timm": timm.__version__,
     }
     if cfg.METHOD =="haf" :
-        campaign_config.update(loss_version="haf_v1", haf={**haf_options, "monitor": haf_monitor})
+        campaign_config.update(loss_version="haf_v1_diagnostics_v2", haf={**haf_options, "monitor": haf_monitor})
     elif data["name"] == "inaturalist19_h":
         campaign_config["loss_version"] = "mbm_seven_ranks_v1"
     if cfg.METHOD == "mbm" and getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False):
@@ -146,8 +146,8 @@ def main():
     if cfg.PREVIEW_AUGMENTATIONS:
         transforms = {name: build_transform(settings, True, name)
                       for name in ("standard", "autoaugment_original")}
-        plot_augmentation_preview(data["samples"]["train"][0][0], transforms, settings,
-                                  reports_dir / "augmentation_preview.png")
+        plot_augmentation_preview(data["samples"]["train"][28][0], transforms, settings,
+                                  reports_dir / "augmentation_preview.png") #TO adapt for different iamges preview
 
     # 4. Training campaign
     for seed in cfg.SEEDS:
