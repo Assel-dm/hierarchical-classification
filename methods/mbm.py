@@ -86,7 +86,7 @@ def build_loss(variant, parameter, data, normalize_hxe=False):
         raise ValueError("Alpha/beta must be a positif or null real number")
     if variant == "soft":
         return HierarchicalSoftLabelLoss(build_soft_label_matrix(data["normalized_distances"], parameter))
-    return HierarchicalCrossEntropy(data["mappings"], parameter)
+    return HierarchicalCrossEntropy(data["mappings"], parameter, normalize_weights=normalize_hxe)
 
 
 def soft_label_statistics(normalized_distances, beta):
