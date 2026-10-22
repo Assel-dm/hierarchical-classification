@@ -1,13 +1,15 @@
 from pathlib import Path
 
 # File on the remote machine
-DATASET = "inaturalist19_h" #small_collemboles or inaturalist19_h
-DATASET_ROOT = Path.home() / "datasets" / "inaturalist-19-h"
+DATASET = "inat21" #small_collemboles or inaturalist19_h
+DATASET_ROOT = Path.home() / "datasets" / "inat21_subset_mini" / "Mammalia"
 OUTPUT_ROOT = Path.home() / "results"  # to adapt
 INAT_HIERARCHY_FILE = DATASET_ROOT / "metadata" / "inaturalist19_isa.txt" #Used hierarchy
 INAT_CATEGORIES_FILE = Path.home() / "datasets" / "inaturalist-19" / "categories.json"
-EXPERIMENT_NAME = "inat19h_convnext_haf_v2"
+EXPERIMENT_NAME = "inat21_mammalia_mini_convnext_mbm_v1"
 
+INAT21_RANKS = ["order", "family", "genus", "species"]
+INAT21_CHECK_FILES = True
 
 # One backbone and one augmentation by campaign
 MODEL_KEY = "convnext_tiny"  # resnet50, convnext_tiny, dinov2_base, dinov3_base
@@ -18,20 +20,20 @@ FREEZE_BATCH_NORM = False
 AUGMENTATION = "autoaugment_original"  # standard or autoaugment_original
 
 
-METHOD = "haf"
-HXE_NORMALIZE_WEIGHTS = True
+METHOD = "mbm"
+HXE_NORMALIZE_WEIGHTS = False
 EXPERIMENTS_MBM = [
     ("ce", None),          # Baseline
-    ("soft", 5),           # Soft Labels : beta
-    ("soft", 10),
+    #("soft", 5),           # Soft Labels : beta
+    #("soft", 10),
     ("soft", 15),
     ("soft", 20),
     ("soft", 30),
-    ("hxe", 0.1),          # HXE : alpha
+    #("hxe", 0.1),          # HXE : alpha
     ("hxe", 0.2),  
     ("hxe", 0.4),  
     ("hxe", 0.5),  
-    ("hxe", 0.7),  
+    #("hxe", 0.7),  
 ]
 
 EXPERIMENTS_HAF = [
@@ -43,7 +45,7 @@ EXPERIMENTS_HAF = [
     ("haf_shc_margin", None),  # CE + SHC + margin
 ]
 
-EXPERIMENTS = EXPERIMENTS_HAF
+EXPERIMENTS = EXPERIMENTS_MBM
 
 HAF_MARGIN = 3.0           # Authors' value; above ln(2), so the hinge stays active
 HAF_MARGIN_MODE = "official"  # official: two KL hinges; paper: one JSD hinge
