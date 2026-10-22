@@ -59,6 +59,13 @@ def main():
             getattr(cfg, "INAT_CATEGORIES_FILE", None),
         )
         show_summary(data)
+    elif cfg.DATASET == "inat21":
+        data = load_inat21(
+            cfg.DATASET_ROOT,
+            ranks=getattr(cfg, "INAT21_RANKS", None),
+            check_files=getattr(cfg, "INAT21_CHECK_FILES", True),
+        )
+        show_inat21_summary(data)
     else:
         raise NotImplementedError(f"Dataset to be added main.py : {cfg.DATASET}")
 
@@ -114,6 +121,14 @@ def main():
         campaign_config["loss_version"] = "mbm_seven_ranks_v1"
     if cfg.METHOD == "mbm" and getattr(cfg, "HXE_NORMALIZE_WEIGHTS", False):
         campaign_config["hxe_normalize_weights"] = True
+        campaign_config["hxe_normalization_version"] = "forwarded_v1"
+    if cfg.DATASET == "inat21":
+        campaign_config.update(
+            dataset_adapter_version="inat21_v1",
+            ranks=data["ranks"],
+            metadata_sha256=data["metadata_sha256"],
+            dataset_info=data["dataset_info"],
+        )
     
     check_configuration(campaign_dir / "campaign.json", campaign_config)
     save_json(campaign_dir / "runtime.json", {"dataset_root": str(data["root"]), "device": str(device),
@@ -146,7 +161,7 @@ def main():
     if cfg.PREVIEW_AUGMENTATIONS:
         transforms = {name: build_transform(settings, True, name)
                       for name in ("standard", "autoaugment_original")}
-        plot_augmentation_preview(data["samples"]["train"][28][0], transforms, settings,
+        plot_augmentation_preview(data["samples"]["train"][18][10], transforms, settings,
                                   reports_dir / "augmentation_preview.png") #TO adapt for different iamges preview
 
     # 4. Training campaign
